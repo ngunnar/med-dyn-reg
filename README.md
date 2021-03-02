@@ -13,8 +13,7 @@ TBD
 
 ## Result
 Smooth imputing when every 5th frame is known
-![impute5](https://user-images.githubusercontent.com/10964648/109632155-04e5de00-7b47-11eb-9771-dd1015b912f1.gif)
-
+![impute5](https://user-images.githubusercontent.com/10964648/109644778-3b772500-7b56-11eb-8789-eec88e1f7323.gif)
 
 ## Citation
 ```
