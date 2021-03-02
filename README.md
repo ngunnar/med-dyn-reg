@@ -1,4 +1,3 @@
-![impute5](https://user-images.githubusercontent.com/10964648/109632139-01525700-7b47-11eb-860f-a4291130f04c.gif)
 # Latent linear dynamics in spatiotemporal medical data
 Official implementation of Latent linear dynamics in spatiotemporal medical data ([Arxiv](https://arxiv.org/abs/2103.00930)).
 
