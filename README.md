@@ -1,3 +1,4 @@
+![impute5](https://user-images.githubusercontent.com/10964648/109632139-01525700-7b47-11eb-860f-a4291130f04c.gif)
 # Latent linear dynamics in spatiotemporal medical data
 Official implementation of Latent linear dynamics in spatiotemporal medical data ([Arxiv](https://arxiv.org/abs/2103.00930)).
 
@@ -11,7 +12,9 @@ TBD
 TBD
 
 ## Result
-TBD
+Smooth imputing when every 5th frame is known
+![impute5](https://user-images.githubusercontent.com/10964648/109632155-04e5de00-7b47-11eb-9771-dd1015b912f1.gif)
+
 
 ## Paper
 Latent linear dynamics in spatiotemporal medical data ([Arxiv](https://arxiv.org/abs/2103.00930))
