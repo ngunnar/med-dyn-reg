@@ -1,4 +1,3 @@
-
 # Latent linear dynamics in spatiotemporal medical data
 Official implementation of Latent linear dynamics in spatiotemporal medical data ([Arxiv](https://arxiv.org/abs/2103.00930)).
 
@@ -26,8 +25,8 @@ The intensity dynamics is modelled with a Linear Gaussian State Space Model (LGS
 TBD
 
 ## Result
-### Smooth imputing when every 5th frame is known
-![impute5](https://user-images.githubusercontent.com/10964648/109644778-3b772500-7b56-11eb-8789-eec88e1f7323.gif)
+### Smooth and filter imputing when every 5th frame is known
+![impute5](https://user-images.githubusercontent.com/10964648/109649372-1dacbe80-7b5c-11eb-978f-09ff9ae47c05.gif)
 
 ### Filter prediction when last 5th frames are unknown
 ![predict5](https://user-images.githubusercontent.com/10964648/109648801-55ffcd00-7b5b-11eb-9f0e-dc559ebc6d5d.gif)
