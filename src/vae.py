@@ -226,7 +226,7 @@ class VAE(tf.keras.Model):
     
     def train_step(self, y_true, mask):
         w_recon = self.config.scale_reconstruction
-        w_kl = self.config.kl_latent_loss_weight * tf.sigmoid((self.epoch - 1)**2/self.config.kl_growth-self.config.kl_growth)
+        w_kl = self.config.kl_latent_loss_weight * tf.sigmoid((self.epoch%self.config.kl_cycle - 1)**2/self.config.kl_growth-self.config.kl_growth)
         with tf.GradientTape() as tape:
             y_hat, y_mu, y_logvar, x_vae, x_mu, x_logvar = self([y_true, mask])
             loss_sum, recon_loss, kl_loss = loss_function_vae(self.config, y_true, mask, y_hat, y_mu, y_logvar, x_vae, x_mu, x_logvar)

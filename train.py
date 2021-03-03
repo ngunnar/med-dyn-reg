@@ -56,6 +56,7 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
         "kl_latent_loss_weight": 1.0,
         "kf_loss_weight": 1.0,
         "kl_growth": 3.0,
+        "kl_cycle":20,
         "only_vae_epochs": 5,
         # Plotting
         "plot_epoch": 1,
@@ -105,7 +106,7 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
     train_log_dir = model_log_dir + '/train'
     test_log_dir = model_log_dir + '/test'
     img_log_dir = model_log_dir + '/img'
-
+    checkpoint_prefix = os.path.join(model_log_dir, "ckpt")
 
     file_writer = tf.summary.create_file_writer(img_log_dir)
     train_summary_writer = tf.summary.create_file_writer(train_log_dir)
@@ -123,6 +124,7 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
     test_dataset = test_generator.data.shuffle(buffer_size=len_test).batch(config.batch_size)
 
     epoch_log = tqdm.tqdm(config.num_epochs, desc='Epoch', position=0)
+    checkpoint = tf.train.Checkpoint(optimizer=model.opt, model=model)
 
     for epoch in range(model.epoch, config.num_epochs+1):
         #################### TRANING ##################################################
@@ -250,6 +252,7 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
         if loss_training < best_loss and model.epoch >= config.only_vae_epochs:
             model.save_weights(model_log_dir + '/kvae_cardiac_best')
             best_loss = loss_training
+            checkpoint.write(file_prefix=checkpoint_prefix)  # overwrite best val model
         model.epoch += 1
 
     model.save_weights(model_log_dir + '/kvae_cardiac_{}'.format(config.dim_z))

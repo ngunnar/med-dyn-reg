@@ -43,6 +43,7 @@ def main(gpu, model_path, start_epoch, ds_path):
         "kl_latent_loss_weight": 1.0,
         "kf_loss_weight": 1.0,
         "kl_growth": 3.0,
+        "kl_cycle":20,
         # Plotting
         "plot_epoch": 5,
         }
