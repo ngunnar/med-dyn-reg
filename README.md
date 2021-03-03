@@ -74,13 +74,7 @@ inputs = [val_batch[0][None,...], mask[None,...]]
 y_filt_val, y_smooth_val, y_vae_val = kvae_model.predict(inputs)
 
 # Latent space analysis
-y_true = val_batch[0][None,...]
-mask = mask
-x_vae, x_mu, x_logvar = kvae_model.encoder(y_true)        
-_, z_mu_filt, z_cov_filt, z_mu_filt_pred, z_cov_filt_pred, x_mu_filt_t, x_covs_filt_t = kvae_model.kf.kalman_filter.forward_filter(x_vae, mask=mask)
-mu_smooth, Sigma_smooth = kvae_model.kf.kalman_filter.posterior_marginals(x_vae, mask = mask)
-x_mu_smooth, x_cov_smooth = kvae_model.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
-x_mu_filt, x_covs_filt = kvae_model.kf.kalman_filter.latents_to_observations(z_mu_filt_pred, z_cov_filt_pred)
+x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred = kvae_model.get_latents(inputs)
 ```
 
 ## Result
