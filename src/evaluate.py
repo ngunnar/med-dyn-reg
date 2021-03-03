@@ -1,13 +1,14 @@
 import numpy as np
-from kvae import KVAE
-from vae import VAE
 from collections import namedtuple
 import tensorflow as tf
 import os
 import numpy as np
-from datasetLoader import TensorflowDatasetLoader
 import pickle
 import json
+
+from .kvae import KVAE
+from .vae import VAE
+from .datasetLoader import TensorflowDatasetLoader
 
 def get_config(path):
     print(path)

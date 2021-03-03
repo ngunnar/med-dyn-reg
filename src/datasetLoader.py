@@ -73,11 +73,9 @@ class TensorflowDatasetLoader():
             fileMode = row['Split'].lower()
             fileName = row['FileName'] + '.avi'
             if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
-                #if fileName in short:
-                #    continue
+                if fileName in short:
+                    continue
                 self.idxs.append(fileName)
-                #if len(self.idxs) > 10:
-                #    break
 
         data = tf.data.Dataset.from_generator(
             self.generator(),

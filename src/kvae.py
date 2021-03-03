@@ -1,9 +1,10 @@
 import tensorflow as tf
 import numpy as np
-from vae import Encoder, Decoder
-from kalman_filter import KalmanFilter
-from losses import loss_function
 import tensorflow_probability as tfp
+
+from .vae import Encoder, Decoder
+from .kalman_filter import KalmanFilter
+from .losses import loss_function
 
 class KVAE(tf.keras.Model):
     def __init__(self, config, name="kvae", **kwargs):

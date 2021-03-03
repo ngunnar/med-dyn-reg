@@ -10,11 +10,11 @@ import time
 import tqdm
 import argparse
 
-from kvae import KVAE
-from datasetLoader import TensorflowDatasetLoader
-from utils import plot_to_image
+from src.kvae import KVAE
+from src.datasetLoader import TensorflowDatasetLoader
+from src.utils import plot_to_image
 
-def main(dim_z, gpu, start_epoch, model_path, prefix, est_logvar, ds_path):
+def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
 
     config_dict = {
         # DS
@@ -27,7 +27,7 @@ def main(dim_z, gpu, start_epoch, model_path, prefix, est_logvar, ds_path):
         'filter_size': 3,
         'filters':[64, 128, 256, 512],
         'noise_pixel_var': 0.01,
-        'est_logvar':est_logvar,
+        'est_logvar':False,
         # LGSSM
         "dim_x": 16,
         "dim_z": dim_z,
@@ -47,12 +47,12 @@ def main(dim_z, gpu, start_epoch, model_path, prefix, est_logvar, ds_path):
         "num_epochs": 50,
         "start_epoch": start_epoch,
         "model_path": model_path,
-        "batch_size": 1,
+        "batch_size": 16,
         "init_lr": 1e-4,
         "decay_steps": 20,
         "decay_rate": 0.85,
         "max_grad_norm": 150.0,
-        "scale_reconstruction": 0.3,
+        "scale_reconstruction": 1.0,
         "kl_latent_loss_weight": 1.0,
         "kf_loss_weight": 1.0,
         "kl_growth": 3.0,
@@ -256,14 +256,13 @@ def main(dim_z, gpu, start_epoch, model_path, prefix, est_logvar, ds_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable', default=None)
-    parser.add_argument('-gpu','--gpus', help='GPUs', default=None)
-    parser.add_argument('-model','--model', help='model path', default=None)
+    parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (required)', default=None)
+    parser.add_argument('-gpu','--gpus', help='comma separated list of GPUs (default -1 (CPU))', default=-1)
+    parser.add_argument('-model','--model', help='model path if continue running model (default:None)', default=None)
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)
-    parser.add_argument('-est_logvar','--est_logvar', type=bool, help='estimate variance of y', default=False)
-    parser.add_argument('-prefix','--prefix', help='Prefix', default=None)
-    parser.add_argument('-ds_path','--ds_path', help='Path to dataset', default='/data/Niklas/EchoNet-Dynamics')
+    parser.add_argument('-prefix','--prefix', help='predix for log folder (default:None)', default=None)
+    parser.add_argument('-ds_path','--ds_path', help='path to dataset (default:/data/Niklas/EchoNet-Dynamics)', default='/data/Niklas/EchoNet-Dynamics')
     args = parser.parse_args()
     
-    main(args.dim_z, args.gpus, args.start_epoch, args.model, args.prefix, args.est_logvar, args.ds_path)
+    main(args.dim_z, args.gpus, args.model, args.start_epoch, args.prefix, args.ds_path)
     

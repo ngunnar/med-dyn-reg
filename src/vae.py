@@ -2,7 +2,8 @@ import tensorflow as tf
 import tensorflow.keras.backend as K
 import tensorflow_probability as tfp
 import numpy as np
-from losses import loss_function_vae
+
+from .losses import loss_function_vae
 
 class Cnn_block(tf.keras.layers.Layer):
     def __init__(self, 
