@@ -40,6 +40,9 @@ Following arguments is supported
 To test
 ```
 import json
+import numpy as np
+from src.datasetLoader import TensorflowDatasetLoader
+
 def get_config(path):
     with open('%s/%s' % (os.path.dirname(path), 'config.json')) as data_file:
         config_dict = json.load(data_file)
@@ -53,7 +56,6 @@ kvae_model = KVAE(config = kvae_config)
 kvae_model.load_weights(kvae_dir + 'kvae_cardiac_32').expect_partial()
 
 # Load validation data
-from src.datasetLoader import TensorflowDatasetLoader
 val_generator = TensorflowDatasetLoader(root = PATH_TO_DS, image_shape = tuple(kvae_config.dim_y), length = kvae_config.ph_steps, split='val', period = kvae_config.period)
 
 # Reconstruction 
