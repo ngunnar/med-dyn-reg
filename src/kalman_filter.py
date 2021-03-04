@@ -104,12 +104,7 @@ class KalmanFilter(tf.keras.layers.Layer):
         x = inputs[0]
         mask = inputs[1]
         
-        # TODO only works for all mask = False atm
-        #mask_float = tf.cast((mask == False)[...,None], dtype='float32')
-        #self._alpha = self.alpha(tf.multiply(mask_float, x))
-        
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
-        #latent_posterior_sample = self.kalman_filter.posterior_sample(x, sample_shape=1, mask = mask)[0,...]
         return mu_smooth, Sigma_smooth
     
     def sample(self, mu_smooth, Sigma_smooth, init_fixed_steps, n_steps, deterministic=True):

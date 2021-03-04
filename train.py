@@ -12,7 +12,7 @@ import argparse
 
 from src.kvae import KVAE
 from src.datasetLoader import TensorflowDatasetLoader
-from src.utils import plot_to_image
+from src.utils import plot_to_image, latent_plot
 
 def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
 
@@ -44,10 +44,10 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
         "sample_z": False,
         # Training
         "gpu": gpu,
-        "num_epochs": 50,
+        "num_epochs": 100,
         "start_epoch": start_epoch,
         "model_path": model_path,
-        "batch_size": 16,
+        "batch_size": 4,
         "init_lr": 1e-4,
         "decay_steps": 20,
         "decay_rate": 0.85,
@@ -210,9 +210,14 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path):
             # Prepare the plot
             y_filt_train, y_smooth_train, y_vae_train = model.predict(plot_train)
             y_filt_test, y_smooth_test, y_vae_test = model.predict(plot_test)
+
+            latent_train = model.get_latents(plot_train)
+            latent_test = model.get_latents(plot_test)
             with file_writer.as_default():
                 tf.summary.image("Training data", plot_to_image(plot_train[0], y_filt_train, y_smooth_train, y_vae_train), step=epoch)
                 tf.summary.image("Test data", plot_to_image(plot_test[0], y_filt_test, y_smooth_test, y_vae_test), step=epoch)
+                tf.summary.image("Latent Training data", latent_plot(latent_train), step=epoch)
+                tf.summary.image("Latent Test data", latent_plot(latent_test), step=epoch)
                 tf.summary.text("A", tf.strings.as_string(model.kf.kalman_filter.transition_matrix), step=epoch)
                 tf.summary.text("A eig", tf.strings.as_string(tf.linalg.eig(model.kf.kalman_filter.transition_matrix)[0]), step=epoch)
                 tf.summary.text("Q", tf.strings.as_string(model.kf.kalman_filter.transition_noise.stddev()), step=epoch)

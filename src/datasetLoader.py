@@ -41,6 +41,38 @@ def normalize_negative_one(video):
     normalized_input = (video - np.amin(video)) / (np.amax(video) - np.amin(video))
     return 2*normalized_input - 1
 
+
+class KvaeDataLoader():
+    def __init__(self, root, d_type, length, image_shape = (64,64), test=False):
+        assert d_type in ['box', 'box_gravity', 'polygon', 'pong'], "d_type {0} not supported".format(d_type)
+        self.image_shape = image_shape
+        self.length = length
+        if test:
+            f = '{0}_test.npz'.format(d_type)
+        else:
+            f = '{0}.npz'.format(d_type)
+        
+        npzfile = np.load(os.path.join(root, f))
+        self.videos = npzfile['images'].astype(np.float32)
+        data = tf.data.Dataset.from_generator(
+            self.generator(),
+            tuple([tf.float32, tf.bool]),
+            tuple([(self.length, *self.image_shape),(self.length)]))
+        self.data = data
+    
+    def _read_video(self, video):
+        video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
+        video = normalize_negative_one(video)[:self.length,...]
+        mask = np.zeros(video.shape[0], dtype='bool')
+        return video, mask
+
+    def generator(self):
+        def gen():
+            for v in self.videos:
+                video, mask = self._read_video(v)
+                yield tuple([video, mask])
+        return gen
+
 class TensorflowDatasetLoader():
     def __init__(self, 
                  root=None, 

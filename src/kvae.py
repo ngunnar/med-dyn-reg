@@ -95,19 +95,20 @@ class KVAE(tf.keras.Model):
         x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
         x_mu_filt_pred, x_covs_filt_pred = self.kf.kalman_filter.latents_to_observations(z_mu_filt_pred, z_cov_filt_pred)
         x_mu_filt, x_covs_filt = self.kf.kalman_filter.latents_to_observations(z_mu_filt, z_cov_filt)
-        return x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred
+        return x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred, x_vae
     
     def sample(self, samples):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)
-        y_hat_sample, _,_ = self.decoder(x_sample)
+        y_hat_sample, _,_ = self.decoder(x_samples)
         return y_hat_sample
 
 
     def train_step(self, y_true, mask):
         with tf.GradientTape() as tape:
             w_recon = self.config.scale_reconstruction
-            w_kl = self.config.kl_latent_loss_weight * tf.sigmoid((self.epoch%self.config.kl_cycle - 1)**2.0/self.config.kl_growth-self.config.kl_growth)
-            w_kf = self.config.kf_loss_weight 
+            beta = tf.sigmoid((self.epoch%self.config.kl_cycle - 1)**2.0/self.config.kl_growth-self.config.kl_growth)
+            w_kl = self.config.kl_latent_loss_weight * beta
+            w_kf = self.config.kf_loss_weight * beta
             y_hat, y_mu, y_logvar, x_vae, x_seq, x_mu, x_logvar, mu_smooth, Sigma_smooth = self([y_true, mask])
             loss_sum, recon_loss, kl_loss, kf_loss = loss_function(self.config, y_true, mask, y_hat, y_mu, y_logvar, 
                                                                    x_vae, x_mu, x_logvar,

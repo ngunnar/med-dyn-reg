@@ -49,6 +49,54 @@ def get_cholesky(A):
         A3 += I * (-mineig * k**2 + spacing)
         k += 1
 
+
+def plot(y, title, max_i, axs):
+    for k in range(0, max_i):
+        if k==0:
+            axs[k].title.set_text(title)        
+        axs[k].imshow(y[k,...], cmap='gray')
+
+
+def latent_plot(latents):
+    x_mu_smooth = latents[0]
+    x_cov_smooth = latents[1]
+    x_mu_filt = latents[2]
+    x_covs_filt = latents[3]
+    x_mu_filt_pred = latents[4]
+    x_covs_filt_pred = latents[5]
+    x_vae = latents[6]
+
+    std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth[0,...]))
+    std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
+    t = np.arange(std_smooth.shape[0])
+    dims = std_smooth.shape[1]
+    figure, axs = plt.subplots(1,dims)
+    for i in range(dims):
+        mu_s = x_mu_smooth[0,:,i]
+        stf_s = std_smooth[:,i]
+        mu_f = x_mu_filt[0,:,i]
+        stf_f = std_filt[:,i]
+        
+        axs[i].plot(t, x_vae[0,:,i],'--')
+        axs[i].plot(t, mu_s, 'r')
+        axs[i].fill_between(t, mu_s-stf_s, mu_s+stf_s, alpha=0.2, color='r')
+        axs[i].plot(t, mu_f, 'g')
+        axs[i].fill_between(t, mu_f-stf_f, mu_f+stf_f, alpha=0.2, color='g')
+    
+    plt.tight_layout()
+    # Save the plot to a PNG in memory.
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    # Closing the figure prevents it from being displayed directly inside
+    # the notebook.
+    plt.close(figure)
+    buf.seek(0)
+    # Convert PNG buffer to TF image
+    image = tf.image.decode_png(buf.getvalue(), channels=4)
+    # Add the batch dimension
+    image = tf.expand_dims(image, 0)
+    return image
+
 def single_plot_to_image(y, y_hat):    
     figure, axs = plt.subplots(2,1, sharex=True, sharey=True)
     axs = axs.flatten()
@@ -96,12 +144,6 @@ def plot_to_image(y, y_filt, y_smooth, y_vae):
     # Add the batch dimension
     image = tf.expand_dims(image, 0)
     return image
-
-def plot(y, title, max_i, axs):
-    for k in range(0, max_i):
-        if k==0:
-            axs[k].title.set_text(title)        
-        axs[k].imshow(y[k,...], cmap='gray')
     
 def A_to_image(model):
     eigenvalues = [e.numpy() for e in tf.linalg.eig(model.kf.kalman_filter.transition_matrix)[0]]
