@@ -28,7 +28,8 @@ class KalmanFilter(tf.keras.layers.Layer):
         
         # Sigma_0
         if not config.sigma_full:
-            init_sigma_np = np.random.rand(config.dim_z).astype(np.float32) * config.init_cov
+            #init_sigma_np = np.random.rand(config.dim_z).astype(np.float32) * config.init_cov
+            init_sigma_np = np.ones(config.dim_z).astype(np.float32) * config.init_cov
         else:    
             init_sigma_np = np.linalg.cholesky(config.init_cov * np.eye(config.dim_z, dtype='float32'))
         init_sigma = tf.constant_initializer(init_sigma_np)

@@ -82,7 +82,8 @@ class TensorflowDatasetLoader():
                  period=2,
                  max_length=250, 
                  clips=1,
-                 pad=None):
+                 pad=None,
+                 size = None):
         if root is None:
             root = '/data/Niklas/EchoNet-Dynamics'
         
@@ -107,6 +108,8 @@ class TensorflowDatasetLoader():
             if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
                 if fileName in short:
                     continue
+                if size is not None and len(self.idxs) > size:
+                    break
                 self.idxs.append(fileName)
 
         data = tf.data.Dataset.from_generator(

@@ -108,7 +108,7 @@ class KVAE(tf.keras.Model):
             w_recon = self.config.scale_reconstruction
             beta = tf.sigmoid((self.epoch%self.config.kl_cycle - 1)**2.0/self.config.kl_growth-self.config.kl_growth)
             w_kl = self.config.kl_latent_loss_weight * beta
-            w_kf = self.config.kf_loss_weight * beta
+            w_kf = self.config.kf_loss_weight
             y_hat, y_mu, y_logvar, x_vae, x_seq, x_mu, x_logvar, mu_smooth, Sigma_smooth = self([y_true, mask])
             loss_sum, recon_loss, kl_loss, kf_loss = loss_function(self.config, y_true, mask, y_hat, y_mu, y_logvar, 
                                                                    x_vae, x_mu, x_logvar,
