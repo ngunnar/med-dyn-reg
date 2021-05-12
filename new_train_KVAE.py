@@ -34,7 +34,7 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path, ds_size=None):
         "dim_z": dim_z,
         "noise_emission": 0.03,
         "noise_transition": 0.08,
-        "init_cov": 30.0,
+        "init_cov": 1.0,
         "trainable_A":True,
         "trainable_C":True,
         "trainable_R":True,
@@ -132,7 +132,6 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path, ds_size=None):
         model.w_kl = model.config.kl_latent_loss_weight * beta
         model.w_kf = model.config.kf_loss_weight * beta
         train_log = tqdm.tqdm(total=len_train//config.batch_size, desc='Train {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
-        train_loss = 0
         for i, (train_y, train_mask) in enumerate(train_dataset):
             loss = model.train_step(train_y, train_mask)
             loss_sum_train_metric(loss)
@@ -207,7 +206,7 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path, ds_size=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (required)', default=None)
+    parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (required)', default=32)
     parser.add_argument('-gpu','--gpus', help='comma separated list of GPUs (default -1 (CPU))', default=-1)
     parser.add_argument('-model','--model', help='model path if continue running model (default:None)', default=None)
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)

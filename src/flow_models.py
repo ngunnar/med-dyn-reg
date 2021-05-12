@@ -27,7 +27,13 @@ class FLOW_VAE(VAE):
         y = inputs[0]
         mask = inputs[1]
         p_y_x, phi_y_x, q_x_y, x = self.forward(y, mask)        
-        self.update_loss(p_y_x, y, q_x_y, x, mask)
+        logpy_x, logpx, logqx_y = self.get_loss(p_y_x, y, q_x_y, x, tf.cast(mask == False, dtype='float32'))
+        elbo = logpy_x + logpx - logqx_y
+        self.elbo_metric.update_state(elbo)
+        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y))
+        self.loss_metric.update_state(loss)
+        self.add_loss(loss)
+
         grad = grad_loss('l2', tf.reshape(phi_y_x.mean(), (y.shape[0]*y.shape[1], y.shape[2], y.shape[3], 2)))
         self.grad_flow_metric.update_state(grad)
         self.add_loss(grad)
@@ -68,12 +74,30 @@ class FLOW_VAE(VAE):
 class FLOW_KVAE(KVAE):
     def __init__(self, config, name="flow_kvae", output_channels=2, **kwargs):
         super(FLOW_KVAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
+        self.grad_flow_metric = tfk.metrics.Mean(name = 'grad flow ↓')
     
     def call(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
         p_y_x, phi_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth = self.forward(y_true, mask)
-        self.update_loss(p_y_x, y_true, q_x_y, x, mask, x_smooth, mu_smooth, Sigma_smooth)
+        
+        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, x, tf.cast(mask == False, dtype='float32'), x_smooth, mu_smooth, Sigma_smooth)
+        
+        elbo = logpy_x + logpx - logqx_y + log_pxz - log_pz_x
+        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y) + self.w_kf * (log_pxz - log_pz_x))
+        
+        self.log_py_x_metric.update_state(logpy_x)
+        self.log_px_metric.update_state(logpx)
+        self.log_qx_y_metric.update_state(logpy_x)        
+        
+        self.elbo_metric.update_state(elbo)
+        self.loss_metric.update_state(loss)
+        self.add_loss(loss)
+
+        grad = grad_loss('l2', tf.reshape(phi_y_x.mean(), (y_true.shape[0]*y_true.shape[1], y_true.shape[2], y_true.shape[3], 2)))
+        self.grad_flow_metric.update_state(grad)
+        self.add_loss(grad)
+
         return p_y_x
     
     def forward(self, y_true, mask):
@@ -91,12 +115,12 @@ class FLOW_KVAE(KVAE):
         y_true = inputs[0]
         mask = inputs[1]
         q_x_y = self.encoder(y_true) 
-        x = tf.reshape(q_x_y.sample(),(-1, self.config.ph_steps, self.config.dim_x))
+        x = q_x_y.sample()
         
         #Smooth
         mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
         x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
-        smooth_dist = tfp.distributions.MultivariateNormalFullCovariance(x_mu_smooth, x_cov_smooth)
+        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=tf.linalg.cholesky(x_cov_smooth))
         if self.debug:
             tf.debugging.assert_equal(self.config.dim_x, x_mu_smooth.shape[-1], "{0} vs {1}".format(self.config.dim_x, x_mu_smooth.shape[-1]))
             tf.debugging.assert_equal(x_cov_smooth.shape[-2], x_cov_smooth.shape[-1],"{0} vs {1}".format(x_cov_smooth.shape[-2],x_cov_smooth.shape[-1]))
@@ -105,16 +129,15 @@ class FLOW_KVAE(KVAE):
         # Filter        
         kalman_data = self.kf.kalman_filter.forward_filter(x, mask=mask)
         _, mu_filt, Sigma_filt, mu_pred, Sigma_pred, x_mu_filt, x_covs_filt = kalman_data
-        #mu_filt_x, Sigma_filt_x = self.kf.kalman_filter.latents_to_observations(mu_filt, Sigma_filt)
-        filt_dist = tfp.distributions.MultivariateNormalFullCovariance(x_mu_filt, x_covs_filt)
+        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt, scale_tril=tf.linalg.cholesky(x_covs_filt))
         if self.debug:
             tf.debugging.assert_equal(self.config.dim_x, x_mu_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_mu_filt.shape[-1]))
             tf.debugging.assert_equal(x_covs_filt.shape[-2], x_covs_filt.shape[-1],"{0} vs {1}".format(x_covs_filt.shape[-2], x_covs_filt.shape[-1]))
             tf.debugging.assert_equal(self.config.dim_x, x_covs_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_covs_filt.shape[-1]))        
          
-        phi_hat_filt = tf.reshape(self.decoder(filt_dist.sample()).sample(), (-1, self.config.ph_steps, *self.config.dim_y, 2))
-        phi_hat_smooth = tf.reshape(self.decoder(smooth_dist.sample()).sample(), (-1, self.config.ph_steps, *self.config.dim_y, 2))
-        phi_hat_vae = tf.reshape(self.decoder(x).sample(), (-1, self.config.ph_steps, *self.config.dim_y, 2))     
+        phi_hat_filt = self.decoder(filt_dist.sample()).sample()
+        phi_hat_smooth = self.decoder(smooth_dist.sample()).sample()
+        phi_hat_vae = self.decoder(x).sample()  
         
         y_hat_filt = warp(phi_hat_filt, y_0)
         y_hat_smooth = warp(phi_hat_smooth, y_0)

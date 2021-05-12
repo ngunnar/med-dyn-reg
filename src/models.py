@@ -32,36 +32,35 @@ class VAE(tfk.Model):
         self.w_recon = self.config.scale_reconstruction
         self.w_kl = self.config.kl_latent_loss_weight
     
-    def update_loss(self, py_x, y, qx_y, x, mask):
-        mask = tf.cast(mask == False, dtype='float32')
+    def get_loss(self, py_x, y, qx_y, x, mask):
         logpx = tf.reduce_sum(tf.multiply(tf.reduce_sum(self.prior.log_prob(x), axis=[2]), mask), axis=-1)
         logqx_y = tf.reduce_sum(tf.multiply(tf.reduce_sum(qx_y.log_prob(x), axis=[2]), mask), axis=-1)
         logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum(py_x.log_prob(y), axis=[2,3]), mask), axis=-1)
                 
-        elbo = logpy_x + logpx - logqx_y
-        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y))
-        
         self.log_py_x_metric.update_state(logpy_x)
         self.log_px_metric.update_state(logpx)
         self.log_qx_y_metric.update_state(logqx_y)
-        self.elbo_metric.update_state(elbo)
         
-        self.loss_metric.update_state(loss)
-        self.add_loss(loss)
-
         y_pred = py_x.sample()
         if self.debug:
             tf.debugging.assert_equal(y_pred.shape, y.shape)
         ssim = tf.image.ssim(y_pred, y, max_val=1.0, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
         self.ssim_metric.update_state(ssim)
-
+        
+        return logpy_x, logpx, logqx_y
+       
 
     def call(self, inputs):
         y = inputs[0]
         mask = inputs[1]
         p_y_x, q_x_y, x = self.forward(y, mask)
         
-        self.update_loss(p_y_x, y, q_x_y, x, mask)
+        logpy_x, logpx, logqx_y = self.get_loss(p_y_x, y, q_x_y, x, tf.cast(mask == False, dtype='float32'))
+        elbo = logpy_x + logpx - logqx_y
+        self.elbo_metric.update_state(elbo)
+        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y))
+        self.loss_metric.update_state(loss)
+        self.add_loss(loss)
         return p_y_x
     
     def forward(self, y, mask):
@@ -132,12 +131,8 @@ class KVAE(VAE):
         self.kf = KalmanFilter(self.config)
         self.w_kf = self.config.kf_loss_weight
     
-    def update_loss(self, py_x, y, qx_y, x, mask, x_smooth, mu_smooth, Sigma_smooth):
-        mask = tf.cast(mask == False, dtype='float32')
-        logpx = tf.reduce_sum(tf.multiply(tf.reduce_sum(self.prior.log_prob(x), axis=[2]), mask), axis=-1)
-        logqx_y = tf.reduce_sum(tf.multiply(tf.reduce_sum(qx_y.log_prob(x), axis=[2]), mask), axis=-1)
-        logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum(py_x.log_prob(y), axis=[2,3]), mask), axis=-1)
-        
+    def get_loss(self, p_y_x, y, q_x_y, x, mask, x_smooth, mu_smooth, Sigma_smooth):
+        logpy_x, logpx, logqx_y = super(KVAE, self).get_loss(p_y_x, y, q_x_y, x, mask)        
         log_pz_z, log_px_z, log_p0, log_pz_x = log_p_kalman(x_smooth, mu_smooth, Sigma_smooth, self.kf.kalman_filter)
 
         log_pz_z = tf.multiply(log_pz_z, mask[:,1:])
@@ -148,32 +143,35 @@ class KVAE(VAE):
         log_pz_x = tf.reduce_sum(log_pz_x, axis=-1)
         log_pxz = tf.reduce_sum(log_px_z, axis=-1) + log_p0 + tf.reduce_sum(log_pz_z, axis=-1)
         
-        elbo = logpy_x + logpx - logqx_y + log_pxz - log_pz_x
-        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y) + self.w_kf * (log_pxz - log_pz_x))
-        
-        self.log_py_x_metric.update_state(logpy_x)
-        self.log_px_metric.update_state(logpx)
-        self.log_qx_y_metric.update_state(logpy_x)
-        
         self.log_pz_x_metric.update_state(log_pz_x)
         self.log_pxz_metric.update_state(log_pxz)
-        
-        self.elbo_metric.update_state(elbo)
-        self.loss_metric.update_state(loss)
-        self.add_loss(loss)
+
+        return logpy_x, logpx, logqx_y, log_pxz, log_pz_x
     
     def call(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
         p_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth = self.forward(y_true, mask)
-        self.update_loss(p_y_x, y_true, q_x_y, x, mask, x_smooth, mu_smooth, Sigma_smooth)
+        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, x, tf.cast(mask == False, dtype='float32'), x_smooth, mu_smooth, Sigma_smooth)
+        
+        elbo = logpy_x + logpx - logqx_y + log_pxz - log_pz_x
+        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y) + self.w_kf * (log_pxz - log_pz_x))
+        
+        self.log_py_x_metric.update_state(logpy_x)
+        self.log_px_metric.update_state(logpx)
+        self.log_qx_y_metric.update_state(logpy_x)        
+        
+        self.elbo_metric.update_state(elbo)
+        self.loss_metric.update_state(loss)
+        self.add_loss(loss)
+
         return p_y_x
     
     def forward(self, y_true, mask):
         q_x_y = self.encoder(y_true)
 
         x = q_x_y.sample()
-        x_kf = tf.reshape(x,(-1, self.config.ph_steps, self.config.dim_x))
+        x_kf = x
         
         mu_smooth, Sigma_smooth = self.kf([x_kf, mask])
         x_smooth = x_kf
@@ -200,12 +198,12 @@ class KVAE(VAE):
         y_true = inputs[0]
         mask = inputs[1]
         q_x_y = self.encoder(y_true) 
-        x = tf.reshape(q_x_y.sample(),(-1, self.config.ph_steps, self.config.dim_x))
+        x = q_x_y.sample()
         
         #Smooth
         mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
         x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
-        smooth_dist = tfp.distributions.MultivariateNormalFullCovariance(x_mu_smooth, x_cov_smooth)
+        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=tf.linalg.cholesky(x_cov_smooth))
         if self.debug:
             tf.debugging.assert_equal(self.config.dim_x, x_mu_smooth.shape[-1], "{0} vs {1}".format(self.config.dim_x, x_mu_smooth.shape[-1]))
             tf.debugging.assert_equal(x_cov_smooth.shape[-2], x_cov_smooth.shape[-1],"{0} vs {1}".format(x_cov_smooth.shape[-2],x_cov_smooth.shape[-1]))
@@ -214,16 +212,15 @@ class KVAE(VAE):
         # Filter        
         kalman_data = self.kf.kalman_filter.forward_filter(x, mask=mask)
         _, mu_filt, Sigma_filt, mu_pred, Sigma_pred, x_mu_filt, x_covs_filt = kalman_data
-        #mu_filt_x, Sigma_filt_x = self.kf.kalman_filter.latents_to_observations(mu_filt, Sigma_filt)
-        filt_dist = tfp.distributions.MultivariateNormalFullCovariance(x_mu_filt, x_covs_filt)
+        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt, scale_tril=tf.linalg.cholesky(x_covs_filt))
         if self.debug:
             tf.debugging.assert_equal(self.config.dim_x, x_mu_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_mu_filt.shape[-1]))
             tf.debugging.assert_equal(x_covs_filt.shape[-2], x_covs_filt.shape[-1],"{0} vs {1}".format(x_covs_filt.shape[-2], x_covs_filt.shape[-1]))
             tf.debugging.assert_equal(self.config.dim_x, x_covs_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_covs_filt.shape[-1]))        
          
-        y_hat_filt = tf.reshape(self.decoder(filt_dist.sample()).sample(), (-1, self.config.ph_steps, *self.config.dim_y))
-        y_hat_smooth = tf.reshape(self.decoder(smooth_dist.sample()).sample(), (-1, self.config.ph_steps, *self.config.dim_y))
-        y_hat_vae = tf.reshape(self.decoder(x).sample(), (-1, self.config.ph_steps, *self.config.dim_y))
+        y_hat_filt = self.decoder(filt_dist.sample()).sample()
+        y_hat_smooth = self.decoder(smooth_dist.sample()).sample()
+        y_hat_vae = self.decoder(x).sample()
         
         return [{'name':'filt', 'data': y_hat_filt},
                {'name':'smooth', 'data': y_hat_smooth},
@@ -234,7 +231,7 @@ class KVAE(VAE):
         mask = inputs[1]
         
         q_x_y = self.encoder(y_true)
-        x = tf.reshape(q_x_y.sample(),(-1, self.config.ph_steps, self.config.dim_x))
+        x = q_x_y.sample()
         
         # Smooth
         mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
