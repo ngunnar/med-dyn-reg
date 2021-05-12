@@ -10,7 +10,7 @@ import time
 import tqdm
 import argparse
 
-from src.models import FLOW_KVAE
+from src.flow_models import FLOW_KVAE
 from src.datasetLoader import TensorflowDatasetLoader
 from src.utils import plot_to_image, latent_plot, single_plot_to_image
 
@@ -34,7 +34,7 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path, ds_size=None):
         "dim_z": dim_z,
         "noise_emission": 0.03,
         "noise_transition": 0.08,
-        "init_cov": 30.0,
+        "init_cov": 1.0, #30.0
         "trainable_A":True,
         "trainable_C":True,
         "trainable_R":True,
@@ -69,12 +69,14 @@ def main(dim_z, gpu, model_path, start_epoch, prefix, ds_path, ds_size=None):
     train_generator = TensorflowDatasetLoader(root = config.ds_path,
                                               image_shape = config.dim_y, 
                                               length = config.ph_steps, 
-                                              period = config.period)
+                                              period = config.period,
+                                              size = config.ds_size)
     test_generator = TensorflowDatasetLoader(root = config.ds_path,
                                              image_shape = config.dim_y,
                                              length = config.ph_steps,
                                              split='test', 
-                                             period = config.period)
+                                             period = config.period,
+                                             size = config.ds_size)
     len_train = int(len(train_generator.idxs))
     len_test = int(len(test_generator.idxs))
     print("Train size", len_train)
@@ -212,7 +214,8 @@ if __name__ == "__main__":
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)
     parser.add_argument('-prefix','--prefix', help='predix for log folder (default:None)', default=None)
     parser.add_argument('-ds_path','--ds_path', help='path to dataset (default:/data/Niklas/EchoNet-Dynamics)', default='/data/Niklas/EchoNet-Dynamics')
+    parser.add_argument('-ds_size','--ds_size', type=int, help='Size of datasets', default=None)
     args = parser.parse_args()
     
-    main(args.dim_z, args.gpus, args.model, args.start_epoch, args.prefix, args.ds_path)
+    main(args.dim_z, args.gpus, args.model, args.start_epoch, args.prefix, args.ds_path, args.ds_size)
     

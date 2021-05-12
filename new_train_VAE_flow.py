@@ -10,11 +10,11 @@ import time
 import tqdm
 import argparse
 
-from src.models import FLOW_VAE
+from src.flow_models import FLOW_VAE
 from src.datasetLoader import TensorflowDatasetLoader
-from src.utils import plot_to_image, latent_plot, single_plot_to_image
+from src.utils import plot_to_image
 
-def main(gpu, model_path, start_epoch, ds_path, ds_size=None):
+def main(gpu, model_path, start_epoch, prefix, ds_path, ds_size):
     config_dict = {
             # DS
             "dim_y":(64,64),
@@ -175,6 +175,8 @@ if __name__ == "__main__":
     parser.add_argument('-gpu','--gpus', help='GPUs', default=None)
     parser.add_argument('-model','--model', help='model path', default=None)
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)
+    parser.add_argument('-prefix','--prefix', help='predix for log folder (default:None)', default=None)
     parser.add_argument('-ds_path','--ds_path', help='Path to dataset', default='/data/Niklas/EchoNet-Dynamics')
+    parser.add_argument('-ds_size','--ds_size', type=int, help='Size of datasets', default=None)
     args = parser.parse_args()
-    main(args.gpus, args.model, args.start_epoch, args.ds_path)
+    main(args.gpus, args.model, args.start_epoch, args.prefix, args.ds_path, args.ds_size)

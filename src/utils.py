@@ -4,6 +4,7 @@ import cv2
 import matplotlib.pyplot as plt
 import tensorflow as tf
 
+
 def isPD(B):
     """Returns true when input is positive-definite, via Cholesky"""
     try:
@@ -56,18 +57,14 @@ def get_cholesky(A):
         k += 1
 
 
-def plot(y, title, max_i, axs, fig):
+def plot(data, title, max_i, axs):
     for k in range(0, max_i):
         if k==0:
             axs[k].title.set_text(title)
-        if y.shape[-1] == 2:
-            im = axs[k].imshow(draw_hsv(y[k,...]))
+        if data.shape[-1] == 2:
+            axs[k].imshow(draw_hsv(data[k,...]))            
         else:           
-            im = axs[k].imshow(y[k,...], cmap='gray')
-        
-        #divider = make_axes_locatable(axs[k])
-        #cax = divider.append_axes('right', size='5%', pad=0.05)
-        #fig.colorbar(im, cax=cax, orientation='vertical')
+            im = axs[k].imshow(data[k,...], cmap='gray')
 
 def latent_plot(latents):
     x_mu_smooth = latents[0]
@@ -164,12 +161,12 @@ def plot_to_image(y, data_arg):
     [ax.axis('off') for ax in axs]
     
     if y is not None:
-        plot(y[0,::step,...], 'True image', l_org, axs[s:l], figure)
+        plot(y[0,::step,...], 'True image', l_org, axs[s:l])
         s = l
         l = l+l_org
     
     for d in data_arg:
-        plot(d['data'][0,::step,...], d['name'], l_org, axs[s:l], figure)
+        plot(d['data'][0,::step,...], d['name'], l_org, axs[s:l])
         s = l
         l = l+l_org
     

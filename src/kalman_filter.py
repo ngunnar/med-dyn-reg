@@ -22,13 +22,12 @@ class KalmanFilter(tf.keras.layers.Layer):
                              name="C")
         
         # mu_0
-        init_mu_np = np.random.randn(config.dim_z).astype(np.float32)#np.zeros((config.dim_z), dtype=np.float32)            
+        init_mu_np = np.random.randn(config.dim_z).astype(np.float32)         
         init_mu = tf.constant_initializer(init_mu_np)
         self.mu = tf.Variable(initial_value=init_mu(shape=init_mu_np.shape), trainable=config.trainable_mu, dtype='float32', name="mu")
         
         # Sigma_0
         if not config.sigma_full:
-            #init_sigma_np = np.random.rand(config.dim_z).astype(np.float32) * config.init_cov
             init_sigma_np = np.ones(config.dim_z).astype(np.float32) * config.init_cov
         else:    
             init_sigma_np = np.linalg.cholesky(config.init_cov * np.eye(config.dim_z, dtype='float32'))
@@ -46,15 +45,10 @@ class KalmanFilter(tf.keras.layers.Layer):
         
         # w ~ N(0,Q)
         if True:
-            #init_Q_np = np.random.rand(config.dim_z).astype(np.float32)
             init_Q_np = np.ones(config.dim_z).astype('float32') * config.noise_transition
         else:    
-            #init_Q_np = np.random.rand(config.dim_z, config.dim_z).astype(np.float32)
-            #init_Q_np = np.dot(init_Q_np, init_Q_np.transpose())
-            #init_Q_np = np.linalg.cholesky(init_Q_np)#/init_Q_np.max())
             init_Q_np = np.eye(config.dim_z).astype('float32') * config.noise_transition
             
-        #init_Q_np = np.linalg.cholesky(config.noise_transition * np.eye(config.dim_z, dtype=np.float32))
         init_Q = tf.constant_initializer(init_Q_np)
         self.Q = tf.Variable(initial_value=init_Q(shape=init_Q_np.shape), trainable=config.trainable_Q, dtype='float32', name="Q")
         if True:
@@ -68,9 +62,6 @@ class KalmanFilter(tf.keras.layers.Layer):
             #init_R_np = np.random.rand(config.dim_x).astype(np.float32)
             init_R_np = np.ones(config.dim_x).astype('float32') * config.noise_emission
         else:    
-            #init_R_np = np.random.rand(config.dim_x, config.dim_x).astype(np.float32)
-            #init_R_np = np.dot(init_R_np, init_R_np.transpose())
-            #init_R_np = np.linalg.cholesky(init_R_np)#/init_R_np.max())
             init_R_np = np.eye(config.dim_x).astype('float32') * config.noise_emission
         init_R = tf.constant_initializer(init_R_np)
         self.R = tf.Variable(initial_value=init_R(shape=init_R_np.shape), trainable=config.trainable_R, dtype='float32', name="R" )
