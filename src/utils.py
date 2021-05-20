@@ -79,7 +79,6 @@ def latent_plot(latents):
     std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
     std_pred = tf.sqrt(tf.linalg.diag_part(x_covs_filt_pred[0,...]))
     t = np.arange(std_smooth.shape[0])
-    t1 = np.arange(1, 1+std_smooth.shape[0])
     dims = std_smooth.shape[1]
     figure, axs = plt.subplots(1,dims, figsize=(6.4*dims, 4.8))
     for i in range(dims):
@@ -95,7 +94,7 @@ def latent_plot(latents):
         axs[i].fill_between(t, mu_s-stf_s, mu_s+stf_s, alpha=0.2, color='r')
         axs[i].plot(t, mu_f, 'g', label='x(t|t)')
         axs[i].fill_between(t, mu_f-stf_f, mu_f+stf_f, alpha=0.2, color='g')
-        axs[i].plot(t1, mu_p, 'y', label='x(t+1|t)')
+        axs[i].plot(t, mu_p, 'y', label='x(t+1|t)')
         axs[i].fill_between(t, mu_p-stf_p, mu_p+stf_p, alpha=0.2, color='y')
         axs[i].legend(loc="upper left", ncol=1)
                     
@@ -166,7 +165,7 @@ def plot_to_image(y, data_arg):
         l = l+l_org
     
     for d in data_arg:
-        plot(d['data'][0,::step,...], d['name'], l_org, axs[s:l])
+        plot(d['data'][0,::step,...].numpy(), d['name'].numpy().decode("utf-8"), l_org, axs[s:l])
         s = l
         l = l+l_org
     

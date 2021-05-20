@@ -37,10 +37,11 @@ def loadvideo(filename: str):
 
     return v
 
-def normalize_negative_one(video):
-    normalized_input = (video - np.amin(video)) / (np.amax(video) - np.amin(video))
+def normalize_negative_one(video, axis):
+    _min = np.min(video, axis=axis)
+    _max = np.max(video, axis=axis)
+    normalized_input = ((video.transpose() - _min)/(_max - _min)).transpose()
     return 2*normalized_input - 1
-
 
 class KvaeDataLoader():
     def __init__(self, root, d_type, length, image_shape = (64,64), test=False):
@@ -83,7 +84,8 @@ class TensorflowDatasetLoader():
                  max_length=250, 
                  clips=1,
                  pad=None,
-                 size = None):
+                 size = None,
+                 output_first_frame = False):
         if root is None:
             root = '/data/Niklas/EchoNet-Dynamics'
         
@@ -112,15 +114,22 @@ class TensorflowDatasetLoader():
                     break
                 self.idxs.append(fileName)
 
-        data = tf.data.Dataset.from_generator(
-            self.generator(),
-            tuple([tf.float32, tf.bool]),
-            tuple([(self.length, *self.image_shape),(self.length)]))
+        if output_first_frame:
+            data = tf.data.Dataset.from_generator(
+            self.flow_generator(),
+            tuple([tf.float32, tf.bool, tf.float32]),
+            tuple([(self.length, *self.image_shape),(self.length), (self.image_shape)]))
+        else:    
+            data = tf.data.Dataset.from_generator(
+                self.generator(),
+                tuple([tf.float32, tf.bool]),
+                tuple([(self.length, *self.image_shape),(self.length)]))
         self.data = data
     
     def _read_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
-        video = loadvideo(video).astype(np.float32)          
+        video = loadvideo(video).astype(np.float32)
+        #video = normalize_negative_one(video)      
         f, h, w = video.shape
         mask = np.zeros(f, dtype='bool')
         if self.length is None:
@@ -150,7 +159,7 @@ class TensorflowDatasetLoader():
                 start = np.random.choice(f - (length) * self.period, self.clips)
             else:
                 start = [0]
-
+        first_frame = video[start[0],...]
         video = tuple(video[s + self.period * np.arange(length), :, :] for s in start)
         mask = tuple(mask[s + self.period * np.arange(length)] for s in start)
         if self.clips == 1:
@@ -172,15 +181,27 @@ class TensorflowDatasetLoader():
 
         if self.image_shape is not None:
             video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
-        video = normalize_negative_one(video)
-        return video, mask
+            first_frame = cv2.resize(first_frame, dsize=self.image_shape,interpolation=cv2.INTER_CUBIC)
+            video = normalize_negative_one(video, axis=(1,2))
+            first_frame = normalize_negative_one(first_frame, axis=(0,1))
+        return video, mask, first_frame
+
     def generator(self):
         def gen():
             for idx in self.idxs:
-                video, mask = self._read_video(idx)
+                video, mask, _ = self._read_video(idx)
                 if np.any(mask == True):
                     print(idx)           
                 yield tuple([video, mask])
+        return gen
+
+    def flow_generator(self):
+        def gen():
+            for idx in self.idxs:
+                video, mask, first_frame = self._read_video(idx)
+                if np.any(mask == True):
+                    print(idx)           
+                yield tuple([video, mask, first_frame])
         return gen
 
 

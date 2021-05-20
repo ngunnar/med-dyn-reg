@@ -11,12 +11,19 @@ tfk = tf.keras
 tfpl = tfp.layers
 
 class VAE(tfk.Model):
-    def __init__(self, config, output_channels=1, elbo_name='elbo = log p(y|x) + log p(x) - log q(x|y)', name="vae", debug = False, **kwargs):
+    def __init__(self, 
+                 config,
+                 output_channels=1,
+                 unet_decoder=False,
+                 elbo_name='elbo = log p(y|x) + log p(x) - log q(x|y)',
+                 name="vae",
+                 debug = False,
+                 **kwargs):
         super(VAE, self).__init__(name=name, **kwargs)
         self.config = config
         self.debug = debug
         self.encoder = Encoder(self.config)
-        self.decoder = Decoder(self.config, output_channels = output_channels)
+        self.decoder = Decoder(self.config, output_channels = output_channels, unet=unet_decoder)
         self.prior = tfd.Normal(loc=tf.zeros(config.dim_x, dtype='float32'),
                                 scale = tf.ones(config.dim_x, dtype='float32'))
 
@@ -32,8 +39,8 @@ class VAE(tfk.Model):
         self.w_recon = self.config.scale_reconstruction
         self.w_kl = self.config.kl_latent_loss_weight
     
-    def get_loss(self, py_x, y, qx_y, x, mask):
-        logpx = tf.reduce_sum(tf.multiply(tf.reduce_sum(self.prior.log_prob(x), axis=[2]), mask), axis=-1)
+    def get_loss(self, py_x, y, qx_y, px, x, mask):
+        logpx = tf.reduce_sum(tf.multiply(tf.reduce_sum(px.log_prob(x), axis=[2]), mask), axis=-1)
         logqx_y = tf.reduce_sum(tf.multiply(tf.reduce_sum(qx_y.log_prob(x), axis=[2]), mask), axis=-1)
         logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum(py_x.log_prob(y), axis=[2,3]), mask), axis=-1)
                 
@@ -44,7 +51,7 @@ class VAE(tfk.Model):
         y_pred = py_x.sample()
         if self.debug:
             tf.debugging.assert_equal(y_pred.shape, y.shape)
-        ssim = tf.image.ssim(y_pred, y, max_val=1.0, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
+        ssim = tf.image.ssim(y_pred, y, max_val=2.0, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
         self.ssim_metric.update_state(ssim)
         
         return logpy_x, logpx, logqx_y
@@ -55,13 +62,19 @@ class VAE(tfk.Model):
         mask = inputs[1]
         p_y_x, q_x_y, x = self.forward(y, mask)
         
-        logpy_x, logpx, logqx_y = self.get_loss(p_y_x, y, q_x_y, x, tf.cast(mask == False, dtype='float32'))
+        logpy_x, logpx, logqx_y = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'))
         elbo = logpy_x + logpx - logqx_y
         self.elbo_metric.update_state(elbo)
         loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y))
         self.loss_metric.update_state(loss)
         self.add_loss(loss)
-        return p_y_x
+        
+        metrices = {'log p(y|x)':tf.reduce_mean(logpy_x).numpy(), 
+                    'log p(x)': tf.reduce_mean(logpx).numpy(), 
+                    'log q(x|y)': tf.reduce_mean(logqx_y).numpy()
+                   }
+        
+        return p_y_x, metrices
     
     def forward(self, y, mask):
         q_x_y = self.encoder(y)
@@ -72,7 +85,8 @@ class VAE(tfk.Model):
             tf.debugging.assert_equal(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x)))
             tf.debugging.assert_equal(x.shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(x.shape, (*y.shape[0:2], self.config.dim_x)))
         return p_y_x, q_x_y, x
-
+    
+    @tf.function
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -92,20 +106,23 @@ class VAE(tfk.Model):
                                                                      staircase=True)
         self.opt = tf.keras.optimizers.Adam(lr_schedule)  
     
-    def train_step(self, y_true, mask):
+    def train_step(self, inputs):
         with tf.GradientTape() as tape:
-            _ = self([y_true, mask])
+            _, metrices = self(inputs)
             loss = tf.reduce_mean(sum(self.losses))
             variables = self.trainable_variables
         
         gradients = tape.gradient(loss, variables)
         gradients, _ = tf.clip_by_global_norm(gradients, self.config.max_grad_norm)
         self.opt.apply_gradients(zip(gradients, variables))
-        return loss   
+        metrices['loss'] = loss.numpy()
+        return loss, metrices
     
-    def test_step(self, y_true, mask):
-        _ = self([y_true, mask], training=False)
-        return tf.reduce_mean(sum(self.losses)) 
+    def test_step(self, inputs):
+        _, metrices = self(inputs, training=False)
+        loss = tf.reduce_mean(sum(self.losses))
+        metrices['loss'] = loss.numpy()
+        return loss, metrices 
     
     def model(self):
         inputs = tf.keras.layers.Input(shape=(self.config.dim_y))
@@ -124,15 +141,15 @@ class VAE(tfk.Model):
         decoder.summary()
 
 class KVAE(VAE):
-    def __init__(self, config, output_channels=1, name="kvae", elbo_name='elbo = log p(y|x) + log p(x) - log q(x|y) + log p(x,z) - log p(z|x)', **kwargs):
-        super(KVAE, self).__init__(name=name, output_channels=output_channels, elbo_name = elbo_name, config=config, **kwargs)
+    def __init__(self, config, name="kvae", elbo_name='elbo = log p(y|x) - log q(x|y) + log p(x,z) - log p(z|x)', **kwargs):
+        super(KVAE, self).__init__(name=name, elbo_name = elbo_name, config=config, **kwargs)
         self.log_pz_x_metric = tfk.metrics.Mean(name = 'log p(z|x) ↓')
         self.log_pxz_metric = tfk.metrics.Mean(name = 'log p(x,z) ↑')
         self.kf = KalmanFilter(self.config)
         self.w_kf = self.config.kf_loss_weight
     
-    def get_loss(self, p_y_x, y, q_x_y, x, mask, x_smooth, mu_smooth, Sigma_smooth):
-        logpy_x, logpx, logqx_y = super(KVAE, self).get_loss(p_y_x, y, q_x_y, x, mask)        
+    def get_loss(self, p_y_x, y, q_x_y, p_x, x, mask, x_smooth, mu_smooth, Sigma_smooth):
+        logpy_x, logpx, logqx_y = super(KVAE, self).get_loss(p_y_x, y, q_x_y, p_x, x, mask)        
         log_pz_z, log_px_z, log_p0, log_pz_x = log_p_kalman(x_smooth, mu_smooth, Sigma_smooth, self.kf.kalman_filter)
 
         log_pz_z = tf.multiply(log_pz_z, mask[:,1:])
@@ -152,10 +169,10 @@ class KVAE(VAE):
         y_true = inputs[0]
         mask = inputs[1]
         p_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth = self.forward(y_true, mask)
-        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, x, tf.cast(mask == False, dtype='float32'), x_smooth, mu_smooth, Sigma_smooth)
+        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, mu_smooth, Sigma_smooth)
         
-        elbo = logpy_x + logpx - logqx_y + log_pxz - log_pz_x
-        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y) + self.w_kf * (log_pxz - log_pz_x))
+        elbo = logpy_x - logqx_y + log_pxz - log_pz_x
+        loss = -(self.w_recon * logpy_x - self.w_kl*logqx_y + self.w_kf * (log_pxz - log_pz_x))
         
         self.log_py_x_metric.update_state(logpy_x)
         self.log_px_metric.update_state(logpx)
@@ -164,8 +181,14 @@ class KVAE(VAE):
         self.elbo_metric.update_state(elbo)
         self.loss_metric.update_state(loss)
         self.add_loss(loss)
+        
+        metrices = {'log p(y|x)': tf.reduce_mean(logpy_x).numpy(), 
+                    'log q(x|y)': tf.reduce_mean(logqx_y).numpy(), 
+                    'log p(x,z)': tf.reduce_mean(log_pxz).numpy(), 
+                    'log p(z|x)': tf.reduce_mean(log_pz_x).numpy()
+                   }
 
-        return p_y_x
+        return p_y_x, metrices
     
     def forward(self, y_true, mask):
         q_x_y = self.encoder(y_true)
@@ -194,6 +217,7 @@ class KVAE(VAE):
         p_y_x = self.decoder(x)
         return p_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth
 
+    @tf.function
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -201,7 +225,7 @@ class KVAE(VAE):
         x = q_x_y.sample()
         
         #Smooth
-        mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
+        mu_smooth, Sigma_smooth = self.kf([x, mask])
         x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
         smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=tf.linalg.cholesky(x_cov_smooth))
         if self.debug:
@@ -226,6 +250,7 @@ class KVAE(VAE):
                {'name':'smooth', 'data': y_hat_smooth},
                {'name':'vae', 'data': y_hat_vae}]
     
+    @tf.function
     def get_latents(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -234,7 +259,7 @@ class KVAE(VAE):
         x = q_x_y.sample()
         
         # Smooth
-        mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
+        mu_smooth, Sigma_smooth = self.kf([x, mask])
         x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
         
         # Filter
@@ -249,17 +274,20 @@ class KVAE(VAE):
         y_hat_sample, _,_ = self.decoder(x_samples)
         return y_hat_sample
 
-    def train_step(self, y_true, mask):
+    def train_step(self, inputs):
         with tf.GradientTape() as tape:
-            _ = self([y_true, mask])
+            _, metrices = self(inputs)
             loss = tf.reduce_mean(sum(self.losses))
             if self.epoch <= self.config.only_vae_epochs:
                 variables = self.encoder.trainable_variables + self.decoder.trainable_variables
+                if hasattr(self, 'u_encoder'):
+                    variables += self.u_encoder.trainable_variables
             else:                               
                 variables = self.trainable_variables
         gradients = tape.gradient(loss, variables)
         gradients, _ = tf.clip_by_global_norm(gradients, self.config.max_grad_norm)
         self.opt.apply_gradients(zip(gradients, variables))
-        return loss
+        metrices['loss'] = loss.numpy()
+        return loss, metrices
 
                                   

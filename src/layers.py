@@ -82,13 +82,13 @@ class Fc_block(tfkl.Layer):
         return x
     
 class Encoder(tfkl.Layer):
-    def __init__(self, config, name="Encoder", **kwargs):
+    def __init__(self, config, unet=False, name="Encoder", **kwargs):
         super(Encoder, self).__init__(name=name, **kwargs)
         self.dim_x = config.dim_x
         self.dim_y = config.dim_y
         self.filters = config.filters
         self.activation_fn = config.activation
-        
+        self.unet = unet
         
         self.cnn_blocks = []
         for i in range(len(self.filters)):
@@ -104,23 +104,32 @@ class Encoder(tfkl.Layer):
     def call(self, y):
         ph_steps = tf.shape(y)[1]
         x = tf.reshape(y, (-1, *self.dim_y, 1)) # (b,s,h,w) -> (b*s, h, w, 1)
+        if self.unet:
+            outs = []
+        
         for l in self.cnn_blocks:
             x = l(x)
+            if self.unet:
+                outs.append(x)
         
         x = self.flatten(x)
         
         mu = tf.reshape(self.mu_layer(x), (-1, ph_steps, self.dim_x))
         sigma = tf.reshape(self.sigma_layer(x), (-1, ph_steps, self.dim_x))
         
-        q_x_y = tfp.distributions.Normal(loc=mu, scale=sigma)
+        q_x_y = tfp.distributions.Normal(mu, sigma)
+
+        if self.unet:
+            return q_x_y, outs
         return q_x_y
     
 class Decoder(tfkl.Layer):
-    def __init__(self, config, output_channels, name='Decoder', **kwargs):
+    def __init__(self, config, output_channels, unet=False, name='Decoder', **kwargs):
         super(Decoder, self).__init__(name=name, **kwargs)
         self.output_channels = output_channels
+        self.unet = unet
         self.dim_y = config.dim_y
-        self.dim_x = config.dim_x
+        self.dim_x = config.dim_x if not unet else config.dim_x * 2
         self.filters = config.filters
                                    
         activation_y_mu = None # For Gaussian
@@ -130,7 +139,7 @@ class Decoder(tfkl.Layer):
         self.fc_block = Fc_block(h,w,self.filters[-1], name='fc_block')
         self.cnnT_blocks = []
         for i in reversed(range(len(self.filters))):
-            self.cnnT_blocks.append(CnnT_block(filters = self.filters[i]*4, 
+            self.cnnT_blocks.append(CnnT_block(filters = self.filters[i]*2 if self.unet else self.filters[i]*4, 
                                                factor = 2,
                                                kernel = config.filter_size,
                                                strides = (1,1),
@@ -150,13 +159,25 @@ class Decoder(tfkl.Layer):
         
         self.flatten = tfkl.Flatten()
         
-    def call(self, x):
+    def call(self, inputs):
+        if self.unet:
+            x = inputs[0]
+            feats = inputs[1]
+        else:
+            x = inputs
+        
         ph_steps = tf.shape(x)[1]
         bs = tf.shape(x)[0]
         x = tf.reshape(x, (-1, self.dim_x)) # (b,s,latent_dim) -> (b*s, latent_dim)
         x = self.fc_block(x)
+        i = 1
         for l in self.cnnT_blocks:
-            x = l(x)
+            if self.unet:
+                f = feats[-i][:,None,...]
+                f = tf.reshape(tf.repeat(f, ph_steps, axis=1), (-1, *f.shape[2:]))
+                x = tf.concat([x, f], axis=-1)
+            x = l(x)            
+            i += 1
         
         y = self.cnnT_block_last(x) # (bs*s, h, w, 2)
 
@@ -169,5 +190,5 @@ class Decoder(tfkl.Layer):
             y_mu = y_mu[...,0] # (b*s,dim_y, dim_y, 1) -> (b,s,dim_y, dim_y)
             y_sigma = y_sigma[...,0]
 
-        p_y_x = tfp.distributions.Normal(loc=y_mu, scale=y_sigma)
+        p_y_x = tfp.distributions.Normal(y_mu, y_sigma)
         return p_y_x

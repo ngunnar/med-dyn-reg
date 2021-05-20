@@ -99,6 +99,16 @@ class KalmanFilter(tf.keras.layers.Layer):
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
         return mu_smooth, Sigma_smooth
     
+    def get_params(self):
+        A = self.kalman_filter.transition_matrix
+        A_eig = tf.linalg.eig(A)[0]
+        Q = self.kalman_filter.transition_noise.stddev()
+        C = self.kalman_filter.observation_matrix
+        R = self.kalman_filter.observation_noise.stddev()
+        mu_0 = self.kalman_filter.initial_state_prior.mean()
+        sigma_0 = self.kalman_filter.initial_state_prior.covariance()
+        return A, A_eig, Q, C, R, mu_0, sigma_0
+    
     def sample(self, mu_smooth, Sigma_smooth, init_fixed_steps, n_steps, deterministic=True):
         A = self.kalman_filter.get_transition_matrix_for_timestep
         R = self.kalman_filter.get_transition_noise_for_timestep
