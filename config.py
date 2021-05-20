@@ -48,4 +48,4 @@ def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics', ds_size=None, dim_z=32
         "plot_epoch": 1,
         }
     config = namedtuple("Config", config_dict.keys())(*config_dict.values())
-    return config
+    return config, config_dict

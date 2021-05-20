@@ -97,7 +97,8 @@ class KalmanFilter(tf.keras.layers.Layer):
         mask = inputs[1]
         
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
-        return mu_smooth, Sigma_smooth
+        p_zt_xT = tfp.distributions.MultivariateNormalTriL(mu_smooth, tf.linalg.cholesky(Sigma_smooth))
+        return p_zt_xT
     
     def get_params(self):
         A = self.kalman_filter.transition_matrix

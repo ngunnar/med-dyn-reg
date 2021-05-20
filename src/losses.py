@@ -21,7 +21,7 @@ def elbo_reconstruction(config, y_true, y_hat, y_mean, y_logvar, mask, num_el):
     log_prob_y_x = tf.truediv(tf.reduce_sum(log_prob_y_x), num_el)
     return log_prob_y_x
 
-def log_p_kalman(x, mu_smooth, Sigma_smooth, kalman_filter):
+def log_p_kalman(x, p_zt_xT, kalman_filter):
     """
     Get log probability densitity functions for the kalman filter
      ```
@@ -51,15 +51,12 @@ def log_p_kalman(x, mu_smooth, Sigma_smooth, kalman_filter):
     #C = kalman_filter.get_observation_matrix_for_timestep
     transition_noise = kalman_filter.transition_noise
     observation_noise = kalman_filter.observation_noise
-
-    mvn_smooth = tfp.distributions.MultivariateNormalTriL(mu_smooth, get_cholesky(Sigma_smooth))
-    #mvn_smooth = tfp.distributions.MultivariateNormalFullCovariance(mu_smooth, Sigma_smooth)
     
     #z_tilde = latent_posterior_sample
-    z_tilde = mvn_smooth.sample()
+    z_tilde = p_zt_xT.sample()
     
     ## log p(z_t | x_T) for t=1,...,T
-    log_prob_z_x = mvn_smooth.log_prob(z_tilde)
+    log_prob_z_x = p_zt_xT.log_prob(z_tilde)
     
     ## log p(x_t | z_t) for all t = 1,...,T
     # log N(x_t | Cz_t, R) -> log N(x_t - Cz_t|0, R) = log N(x_Cz_t | 0, R)

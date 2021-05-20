@@ -23,7 +23,7 @@ def main(dim_z=16,
          ds_path='/data/Niklas/EchoNet-Dynamics', 
          ds_size=None,
          log_folder='ukvae_flow'):
-    config = get_config(ds_path, ds_size, dim_z, gpu, start_epoch, model_path)
+    config, config_dict = get_config(ds_path, ds_size, dim_z, gpu, start_epoch, model_path)
 
     os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
     

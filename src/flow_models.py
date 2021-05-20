@@ -86,9 +86,9 @@ class FLOW_KVAE(KVAE):
         y = inputs[0]
         mask = inputs[1]
         y_0 = inputs[2]
-        p_y_x, phi_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth = self.forward(y, mask, y_0)
+        p_y_x, phi_y_x, q_x_y, x, x_smooth, p_zt_xT = self.forward(y, mask, y_0)
         
-        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, mu_smooth, Sigma_smooth)
+        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, p_zt_xT)
         
         elbo = logpy_x - logqx_y + log_pxz - log_pz_x
         loss = -(self.w_recon * logpy_x - self.w_kl* - logqx_y + self.w_kf * (log_pxz - log_pz_x))
@@ -114,13 +114,13 @@ class FLOW_KVAE(KVAE):
         return p_y_x, metrices
     
     def forward(self, y, mask, y_0):
-        phi_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth =  super().forward(y, mask)
+        phi_y_x, q_x_y, x, x_smooth, p_zt_xT =  super().forward(y, mask)
         phi_sample = phi_y_x.mean() #bs, t, w, h, 2
         y_mu = warp(phi_sample, y_0)
         y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
         p_y_x = tfp.distributions.Normal(loc=y_mu, scale=y_sigma)
 
-        return p_y_x, phi_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth
+        return p_y_x, phi_y_x, q_x_y, x, x_smooth, p_zt_xT
 
     @tf.function
     def predict(self, inputs):
@@ -186,7 +186,7 @@ class UFLOW_KVAE(FLOW_KVAE):
         x = q_x_y.sample()
         x_kf = x
         
-        mu_smooth, Sigma_smooth = self.kf([x_kf, mask])
+        p_zt_xT = self.kf([x_kf, mask])
         x_smooth = x_kf
         
         # Decoder
@@ -196,13 +196,13 @@ class UFLOW_KVAE(FLOW_KVAE):
         y_mu = warp(phi, y_0)
         y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
         p_y_x = tfp.distributions.Normal(loc=y_mu, scale=y_sigma)
-        return p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, mu_smooth, Sigma_smooth
+        return p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, p_zt_xT
     
     def call(self, inputs):
         y = inputs[0]
         mask = inputs[1]
         y_0 = inputs[2]
-        p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, mu_smooth, Sigma_smooth = self.forward(y, mask, y_0)
+        p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, p_zt_xT = self.forward(y, mask, y_0)
         logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, 
                                                                    y, 
                                                                    q_x_y, 
@@ -210,8 +210,7 @@ class UFLOW_KVAE(FLOW_KVAE):
                                                                    x, 
                                                                    tf.cast(mask == False, dtype='float32'), 
                                                                    x_smooth, 
-                                                                   mu_smooth,
-                                                                   Sigma_smooth)
+                                                                   p_zt_xT)
         
         elbo = logpy_x + logpx - logqx_y + log_pxz - log_pz_x
         loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y) + self.w_kf * (log_pxz - log_pz_x))

@@ -148,9 +148,9 @@ class KVAE(VAE):
         self.kf = KalmanFilter(self.config)
         self.w_kf = self.config.kf_loss_weight
     
-    def get_loss(self, p_y_x, y, q_x_y, p_x, x, mask, x_smooth, mu_smooth, Sigma_smooth):
+    def get_loss(self, p_y_x, y, q_x_y, p_x, x, mask, x_smooth, p_zt_xT):
         logpy_x, logpx, logqx_y = super(KVAE, self).get_loss(p_y_x, y, q_x_y, p_x, x, mask)        
-        log_pz_z, log_px_z, log_p0, log_pz_x = log_p_kalman(x_smooth, mu_smooth, Sigma_smooth, self.kf.kalman_filter)
+        log_pz_z, log_px_z, log_p0, log_pz_x = log_p_kalman(x_smooth, p_zt_xT, self.kf.kalman_filter)
 
         log_pz_z = tf.multiply(log_pz_z, mask[:,1:])
         log_px_z = tf.multiply(log_px_z, mask)
@@ -168,8 +168,8 @@ class KVAE(VAE):
     def call(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
-        p_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth = self.forward(y_true, mask)
-        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, mu_smooth, Sigma_smooth)
+        p_y_x, q_x_y, x, x_smooth, p_zt_xT = self.forward(y_true, mask)
+        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, p_zt_xT)
         
         elbo = logpy_x - logqx_y + log_pxz - log_pz_x
         loss = -(self.w_recon * logpy_x - self.w_kl*logqx_y + self.w_kf * (log_pxz - log_pz_x))
@@ -196,9 +196,13 @@ class KVAE(VAE):
         x = q_x_y.sample()
         x_kf = x
         
-        mu_smooth, Sigma_smooth = self.kf([x_kf, mask])
+        p_zt_xT = self.kf([x_kf, mask])
         x_smooth = x_kf
         if self.config.sample_z:
+            x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(p_zt_xT.mean(), p_zt_xT.covariance())
+            p_xt_xT = tfp.distributions.MultivariateNormalTriL(x_mu_smooth, tf.linalg.cholesky(x_cov_smooth))
+            x_smooth = p_xt_xT.sample()
+            '''
             C = self.kf.kalman_filter.get_observation_matrix_for_timestep
             Q = self.kf.kalman_filter.get_observation_noise_for_timestep
 
@@ -213,9 +217,9 @@ class KVAE(VAE):
                 x_smooth.append(x_n)
 
             x_smooth = tf.stack(x_smooth, 1)
-        
+            '''
         p_y_x = self.decoder(x)
-        return p_y_x, q_x_y, x, x_smooth, mu_smooth, Sigma_smooth
+        return p_y_x, q_x_y, x, x_smooth, p_zt_xT
 
     @tf.function
     def predict(self, inputs):
@@ -225,7 +229,7 @@ class KVAE(VAE):
         x = q_x_y.sample()
         
         #Smooth
-        mu_smooth, Sigma_smooth = self.kf([x, mask])
+        mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
         x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
         smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=tf.linalg.cholesky(x_cov_smooth))
         if self.debug:
@@ -259,7 +263,7 @@ class KVAE(VAE):
         x = q_x_y.sample()
         
         # Smooth
-        mu_smooth, Sigma_smooth = self.kf([x, mask])
+        mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
         x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
         
         # Filter

@@ -11,19 +11,19 @@ import tqdm
 import argparse
 
 from config import get_config
-from src.flow_models import FLOW_VAE
+from src.models import VAE
 from src.datasetLoader import TensorflowDatasetLoader
 from src.utils import plot_to_image
-         
+
 def main(gpu='0',
          model_path=None, 
          start_epoch=1, 
          prefix=None, 
          ds_path='/data/Niklas/EchoNet-Dynamics', 
          ds_size=None,
-         log_folder='vae_flow'):
+         log_folder='vae'):
     
-    config = get_config(ds_path, ds_size, None, gpu, start_epoch, model_path)
+    config, config_dict = get_config(ds_path, ds_size, None, gpu, start_epoch, model_path)
 
     os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
 
@@ -31,15 +31,13 @@ def main(gpu='0',
                                               image_shape = config.dim_y, 
                                               length = config.ph_steps, 
                                               period = config.period,
-                                              size = config.ds_size,
-                                              output_first_frame = True)
+                                              size = config.ds_size)
     test_generator = TensorflowDatasetLoader(root = config.ds_path,
                                              image_shape = config.dim_y,
                                              length = config.ph_steps,
                                              split='test', 
                                              period = config.period,
-                                             size = config.ds_size,
-                                             output_first_frame = True)
+                                             size = config.ds_size)
     len_train = int(len(train_generator.idxs))
     len_test = int(len(test_generator.idxs))
     print("Train size", len_train)
@@ -52,7 +50,7 @@ def main(gpu='0',
     test_dataset = test_dataset.batch(config.batch_size)
 
     # model training
-    model = FLOW_VAE(config = config)
+    model = VAE(config = config)
     if config.model_path is not None:
         model.load_weights(config.model_path)
     model.compile(int(len(train_generator.idxs)/config.batch_size))
@@ -61,9 +59,9 @@ def main(gpu='0',
     loss_sum_train_metric = tf.keras.metrics.Mean()
 
     if prefix is not None:
-        model_log_dir = 'logs_new/{0}/{1}'.format(log_folder,prefix)
+        model_log_dir = 'logs_new/{0}/{1}'.format(log_folder, prefix)
     else:
-        model_log_dir = 'logs_new/{0}/{1}'.format(log_folder,datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+        model_log_dir = 'logs_new/{0}/{1}'.format(log_folder, datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     train_log_dir = model_log_dir + '/train'
     test_log_dir = model_log_dir + '/test'
     img_log_dir = model_log_dir + '/img'
@@ -77,9 +75,9 @@ def main(gpu='0',
         json.dump(config_dict, f)
 
     plot_train = list(train_generator.data.take(1))[0]
-    plot_train = [plot_train[0][None,...], plot_train[1][None,...], plot_train[2][None,...]]
+    plot_train = [plot_train[0][None,...], plot_train[1][None,...]]
     plot_test = list(test_generator.data.take(1))[0]
-    plot_test = [plot_test[0][None,...], plot_test[1][None,...], plot_test[2][None,...]]
+    plot_test = [plot_test[0][None,...], plot_test[1][None,...]]
 
     train_dataset = train_generator.data
     train_dataset = train_dataset.shuffle(buffer_size=len_train).batch(config.batch_size)
@@ -92,8 +90,8 @@ def main(gpu='0',
         beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
         model.w_kl = model.config.kl_latent_loss_weight * beta
         train_log = tqdm.tqdm(total=len_train//config.batch_size, desc='Train {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
-        for i, (train_y, train_mask, train_first) in enumerate(train_dataset):
-            loss, metrices = model.train_step([train_y, train_mask, train_first])
+        for i, (train_y, train_mask) in enumerate(train_dataset):
+            loss, metrices = model.train_step([train_y, train_mask])
             loss_sum_train_metric(loss)
             train_log.set_postfix(metrices)
             train_log.update(1)
@@ -107,8 +105,8 @@ def main(gpu='0',
 
         #################### TESTING ##################################################
         test_log = tqdm.tqdm(total=len_test//config.batch_size, desc='Test {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
-        for i, (test_y, test_mask, test_first) in enumerate(test_dataset):
-            loss, metrices = model.test_step([test_y, test_mask, test_first])
+        for i, (test_y, test_mask) in enumerate(test_dataset):
+            loss, metrices = model.test_step([test_y, test_mask])
             test_log.set_postfix(metrices)
             test_log.update(1)
         test_log.close()
@@ -135,12 +133,12 @@ def main(gpu='0',
 
         # Save best model
         if loss_training < best_loss:
-            model.save_weights(model_log_dir + '/vae_flow_cardiac_best')
+            model.save_weights(model_log_dir + '/vae_cardiac_best')
             best_loss = loss_training
             checkpoint.write(file_prefix=checkpoint_prefix)  # overwrite best val model
         model.epoch += 1
 
-    model.save_weights(model_log_dir + '/vae_flow_cardiac')
+    model.save_weights(model_log_dir + '/vae_cardiac')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
