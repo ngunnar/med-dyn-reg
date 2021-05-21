@@ -1,7 +1,6 @@
 import tensorflow as tf
 import numpy as np
 import tensorflow_probability as tfp
-from .utils import get_cholesky
 
 def log_normal_pdf(sample, mean, logvar, mask, num_el, raxis=1):
     log2pi = tf.math.log(2. * np.pi)

@@ -2,6 +2,74 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
 
+
+# tfp.distributions.LinearGaussianStateSpaceModel.posterior_marginals can return non positive covariance matrix (round error?) 
+def get_cholesky(A):
+    """Find the nearest positive-definite matrix to input
+
+    A Python/Numpy port of John D'Errico's `nearestSPD` MATLAB code [1], which
+    credits [2].
+
+    [1] https://www.mathworks.com/matlabcentral/fileexchange/42885-nearestspd
+
+    [2] N.J. Higham, "Computing a nearest symmetric positive semidefinite
+    matrix" (1988): https://doi.org/10.1016/0024-3795(88)90223-6
+    """
+
+    is_pd, A_cholesky = isPD(A)
+    if is_pd:
+        print("test")
+        return A_cholesky
+    
+    B = (A + tf.transpose(A, perm=[0,1,3,2])) / 2
+    s, u, V = tf.linalg.svd(B)
+    V = tf.transpose(V, perm=[0,1,3,2])
+    S = tf.linalg.diag(s)
+    H = tf.matmul(V, tf.matmul(S, V), transpose_a=True)
+    A2 = (B + H) / 2
+
+    A3 = (A2 + tf.transpose(A2, perm=[0,1,3,2])) / 2
+    
+    is_pd, A_cholesky = isPD(A3)
+    if is_pd:
+        print("test")
+        return A_cholesky
+
+    #spacing = tf.spacing(tf.linalg.norm(A))
+    spacing = np.spacing(tf.norm(A))
+    # The above is different from [1]. It appears that MATLAB's `chol` Cholesky
+    # decomposition will accept matrixes with exactly 0-eigenvalue, whereas
+    # Numpy's will not. So where [1] uses `eps(mineig)` (where `eps` is Matlab
+    # for `np.spacing`), we use the above definition. CAVEAT: our `spacing`
+    # will be much larger than [1]'s `eps(mineig)`, since `mineig` is usually on
+    # the order of 1e-16, and `eps(1e-16)` is on the order of 1e-34, whereas
+    # `spacing` will, for Gaussian random matrixes of small dimension, be on
+    # othe order of 1e-16. In practice, both ways converge, as the unit test
+    # below suggests.
+    I = np.eye(A.shape[0])
+    k = 1
+    while True:
+        print(k)
+        #mineig = np.min(np.real(la.eigvals(A3)))
+        is_pd, A_cholesky = isPD(A3)
+        if is_pd:
+            return A_cholesky
+        
+        mineig = tf.math.reduce_min(tf.math.real(tf.linalg.eigvals(A3)))
+        A3 += I * (-mineig * k**2 + spacing)
+        k += 1
+
+    return A3
+
+
+def isPD(B):
+    """Returns true when input is positive-definite, via Cholesky"""
+    try:
+        A = tf.linalg.cholesky(B)
+        return True, A
+    except:
+        return False, None
+
 class KalmanFilter(tf.keras.layers.Layer):
     def __init__(self, config, name='kalman_filter', **kwargs):
         super(KalmanFilter, self).__init__(name=name, **kwargs)
@@ -97,7 +165,7 @@ class KalmanFilter(tf.keras.layers.Layer):
         mask = inputs[1]
         
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
-        p_zt_xT = tfp.distributions.MultivariateNormalTriL(mu_smooth, tf.linalg.cholesky(Sigma_smooth))
+        p_zt_xT = tfp.distributions.MultivariateNormalTriL(mu_smooth, get_cholesky(Sigma_smooth))
         return p_zt_xT
     
     def get_params(self):

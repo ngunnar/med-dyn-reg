@@ -5,58 +5,6 @@ import matplotlib.pyplot as plt
 import tensorflow as tf
 
 
-def isPD(B):
-    """Returns true when input is positive-definite, via Cholesky"""
-    try:
-        A = tf.linalg.cholesky(B)
-        return True, A
-    except:
-        return False, None
-
-def get_cholesky(A):
-    """Find the nearest positive-definite matrix to input
-
-    A Python/Tensorflow port of John D'Errico's `nearestSPD` MATLAB code [1], which
-    credits [2].
-
-    [1] https://www.mathworks.com/matlabcentral/fileexchange/42885-nearestspd
-
-    [2] N.J. Higham, "Computing a nearest symmetric positive semidefinite
-    matrix" (1988): https://doi.org/10.1016/0024-3795(88)90223-6
-    """
-    is_pd, A_cholesky = isPD(A)
-    if is_pd:
-        return A_cholesky
-    
-    '''
-    # Compute symmetric part of A
-    B = (A + tf.transpose(A, perm=[0,1,3,2]))/2
-    # Compute spectral decomposition B = UFU^T
-    s, u, V = tf.linalg.svd(B)
-    S = tf.linalg.diag(s)
-    H = tf.matmul(V, tf.matmul(S, V), transpose_a=True)
-    A2 = (B+H)/2
-    A3 = (A2 + tf.transpose(A2, perm=[0,1,3,2]))/2
-    is_pd, A_cholesky = isPD(A3)
-    if is_pd:
-        return A_cholesky
-    '''
-    spacing = np.spacing(tf.norm(A))
-    I = tf.eye(A.shape[-1])
-    k = 1
-    while True:
-        print(k)
-        #is_pd, A_cholesky = isPD(A3)
-        is_pd, A_cholesky = isPD(A)
-        if is_pd:
-            return A_cholesky
-        #mineig = tf.math.reduce_min(tf.math.real(tf.linalg.eigvals(A3)))
-        #A3 += I * (-mineig * k**2 + spacing)
-        mineig = tf.math.reduce_min(tf.math.real(tf.linalg.eigvals(A)))
-        A += I * (-mineig * k**2 + spacing)
-        k += 1
-
-
 def plot(data, title, max_i, axs):
     for k in range(0, max_i):
         if k==0:
