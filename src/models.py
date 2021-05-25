@@ -10,6 +10,9 @@ tfd = tfp.distributions
 tfk = tf.keras
 tfpl = tfp.layers
 
+import numpy as np
+import os
+        
 class VAE(tfk.Model):
     def __init__(self, 
                  config,
@@ -111,6 +114,13 @@ class VAE(tfk.Model):
             _, metrices = self(inputs)
             loss = tf.reduce_mean(sum(self.losses))
             variables = self.trainable_variables
+            if hasattr(self.config, 'only_vae_epochs'):
+                if self.epoch <= self.config.only_vae_epochs:
+                    variables = self.encoder.trainable_variables + self.decoder.trainable_variables
+                    if hasattr(self, 'u_encoder'):
+                        variables += self.u_encoder.trainable_variables
+                else:                               
+                    variables = self.trainable_variables
         
         gradients = tape.gradient(loss, variables)
         gradients, _ = tf.clip_by_global_norm(gradients, self.config.max_grad_norm)
@@ -277,21 +287,5 @@ class KVAE(VAE):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)
         y_hat_sample, _,_ = self.decoder(x_samples)
         return y_hat_sample
-
-    def train_step(self, inputs):
-        with tf.GradientTape() as tape:
-            _, metrices = self(inputs)
-            loss = tf.reduce_mean(sum(self.losses))
-            if self.epoch <= self.config.only_vae_epochs:
-                variables = self.encoder.trainable_variables + self.decoder.trainable_variables
-                if hasattr(self, 'u_encoder'):
-                    variables += self.u_encoder.trainable_variables
-            else:                               
-                variables = self.trainable_variables
-        gradients = tape.gradient(loss, variables)
-        gradients, _ = tf.clip_by_global_norm(gradients, self.config.max_grad_norm)
-        self.opt.apply_gradients(zip(gradients, variables))
-        metrices['loss'] = loss.numpy()
-        return loss, metrices
 
                                   

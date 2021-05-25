@@ -129,7 +129,6 @@ class TensorflowDatasetLoader():
     def _read_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
         video = loadvideo(video).astype(np.float32)
-        #video = normalize_negative_one(video)      
         f, h, w = video.shape
         mask = np.zeros(f, dtype='bool')
         if self.length is None:
@@ -182,8 +181,9 @@ class TensorflowDatasetLoader():
         if self.image_shape is not None:
             video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
             first_frame = cv2.resize(first_frame, dsize=self.image_shape,interpolation=cv2.INTER_CUBIC)
-            video = normalize_negative_one(video, axis=(1,2))
-            first_frame = normalize_negative_one(first_frame, axis=(0,1))
+        
+        video = normalize_negative_one(video, axis=(1,2))
+        first_frame = normalize_negative_one(first_frame, axis=(0,1))
         return video, mask, first_frame
 
     def generator(self):
@@ -204,7 +204,128 @@ class TensorflowDatasetLoader():
                 yield tuple([video, mask, first_frame])
         return gen
 
+import collections
+def _defaultdict_of_lists():
+    """Returns a defaultdict of lists.
+    This is used to avoid issues with Windows (if this function is anonymous,
+    the Echo dataset cannot be used in a dataloader).
+    """
 
+    return collections.defaultdict(list)
+
+import skimage.draw
+from skimage.transform import resize
+from skimage import img_as_bool
+
+def read_trace(t, video):
+    x1, y1, x2, y2 = t[:, 0], t[:, 1], t[:, 2], t[:, 3]
+    x = np.concatenate((x1[1:], np.flip(x2[1:])))
+    y = np.concatenate((y1[1:], np.flip(y2[1:])))
+
+    r, c = skimage.draw.polygon(np.rint(y).astype(np.int), np.rint(x).astype(np.int), (video.shape[1], video.shape[2]))
+    mask = np.zeros((video.shape[1], video.shape[2]), np.float32)
+    mask[r, c] = 1
+    return mask
+
+class EvalTensorflowDatasetLoader():
+    def __init__(self, 
+                 root=None, 
+                 image_shape = (64,64), 
+                 split = 'train', 
+                 period=2,
+                 max_length=250, 
+                 clips=1,
+                 pad=None,
+                 size = None):
+        if root is None:
+            root = '/data/Niklas/EchoNet-Dynamics'
+        
+        if clips != 1:
+            raise NotImplementedError("Clips other than 1 is not implemented")
+        if pad is not None:
+            raise NotImplementedError("Pads is not implemented")
+        self.image_shape = image_shape
+        self.folder = pathlib.Path(root)
+        self.split = split
+        self.max_length = max_length
+        self.period = period
+        self.clips = clips
+        self.pad = pad
+        
+        self.idxs = []
+        df = pd.read_csv(self.folder / "FileList.csv")
+        for index, row in df.iterrows():
+            fileMode = row['Split'].lower()
+            fileName = row['FileName'] + '.avi'
+            if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
+                if fileName in short:
+                    continue
+                if size is not None and len(self.idxs) > size:
+                    break
+                self.idxs.append(fileName)
+
+        self.frames = collections.defaultdict(list)
+        self.trace = collections.defaultdict(_defaultdict_of_lists)
+        df_vol = pd.read_csv(self.folder /"VolumeTracings.csv")
+        for index, row in df_vol.iterrows():
+            fileName = row['FileName']
+            if fileName not in self.idxs:
+                continue
+            x1 = float(row['X1'])
+            y1 = float(row['Y1'])
+            x2 = float(row['X2'])
+            y2 = float(row['Y2'])
+            frame = int(row['Frame'])
+            if frame not in self.trace[fileName]:
+                self.frames[fileName].append(frame)                
+            self.trace[fileName][frame].append((x1, y1, x2, y2))
+            
+        for filename in self.frames:
+            for frame in self.frames[filename]:
+                self.trace[filename][frame] = np.array(self.trace[filename][frame])
+        
+    def _read_video(self, idx):
+        video = os.path.join(self.folder, "Videos", idx)
+        video = loadvideo(video).astype(np.float32)
+
+        trace1_index = min(self.frames[idx])
+        trace2_index = max(self.frames[idx])
+        trace1 = read_trace(self.trace[idx][trace1_index], video)
+        trace2 = read_trace(self.trace[idx][trace2_index], video)
+
+        f, h, w = video.shape
+        mask = np.zeros(f, dtype='bool')
+
+        first_frame = video[trace1_index,...]
+        video = video[np.arange(trace1_index, trace2_index+1, self.period), :, :]
+        mask = mask[np.arange(trace1_index, trace2_index+1, self.period)]
+        #if self.clips == 1:
+        #    video = video[0]
+        #    mask = mask[0]
+        #else:
+        #    video = np.stack(video)
+        #    mask = np.stack(mask)
+
+        if self.pad is not None:
+            # Add padding of zeros (mean color of videos)
+            # Crop of original size is taken out
+            # (Used as augmentation)
+            l, h, w = video.shape
+            temp = np.zeros((l, h + 2 * self.pad, w + 2 * self.pad), dtype=video.dtype)
+            temp[:, self.pad:-self.pad, self.pad:-self.pad] = video  # pylint: disable=E1130
+            i, j = np.random.randint(0, 2 * self.pad, 2)
+            video = temp[:, :, i:(i + h), j:(j + w)]
+
+        if self.image_shape is not None:
+            video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
+            first_frame = cv2.resize(first_frame, dsize=self.image_shape,interpolation=cv2.INTER_CUBIC)
+            trace1 = img_as_bool(resize(trace1, self.image_shape)).astype('float32')
+            trace2 = img_as_bool(resize(trace2, self.image_shape)).astype('float32')
+
+        video = normalize_negative_one(video, axis=(1,2))
+        first_frame = normalize_negative_one(first_frame, axis=(0,1))
+        return video, mask, first_frame, trace1, trace2, trace1_index, trace2_index
+    
 short = ['0X106766224781FAE2.avi',
 '0X10D734CBEB6ECB81.avi',
 '0X1185DA5AB0D9BE6A.avi',

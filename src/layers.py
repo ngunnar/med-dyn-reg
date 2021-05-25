@@ -13,19 +13,21 @@ class Cnn_block(tfkl.Layer):
                  strides = (2,2), 
                  name='CNN_block', **kwargs):
         super(Cnn_block, self).__init__(name=name, **kwargs)
-        self.conv = tfk.Sequential([
-            tfkl.Conv2D(filters=filters,
+        self.conv2d = tfkl.Conv2D(filters=filters,
                                        kernel_size=kernel,
                                        strides=strides,
                                        padding='same',
                                        use_bias=True,
                                        kernel_initializer='glorot_normal',
                                        bias_initializer='zeros',
-                                       activation=None),
-            tfkl.BatchNormalization(momentum=0.99, epsilon=0.001),
-            tfkl.LeakyReLU(0.2)])
+                                       activation=None,
+                                       name = name + '_conv')
+        self.batchNorm = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = name + '_bn')
+        self.leakyRelu = tfkl.LeakyReLU(0.2, name = name + '_leakyRelu')
     def call(self, x):
-        x = self.conv(x)
+        x = self.conv2d(x)
+        x = self.batchNorm(x)
+        x = self.leakyRelu(x)
         return x
 
 class CnnT_block(tf.keras.layers.Layer):
@@ -38,18 +40,18 @@ class CnnT_block(tf.keras.layers.Layer):
                  name='CnnT_block', **kwargs):
         super(CnnT_block, self).__init__(name=name, **kwargs)
         self.factor = factor
-        self.convT = tf.keras.Sequential([
-            tfkl.Conv2D(filters=filters,
+        self.convT = tfkl.Conv2D(filters=filters,
                                    kernel_size=kernel,
                                    strides=strides,
                                    padding='same',
                                    use_bias=True,
                                    kernel_initializer='glorot_normal',
                                    bias_initializer='zeros',
-                                   activation=None),
-            tfkl.BatchNormalization(momentum=0.99, epsilon=0.001),
-            tfkl.LeakyReLU(0.2)])
-    
+                                   activation=None,
+                                   name = name+'_convT')
+        self.batchNorm = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = name+'_bn')
+        self.leakyReLU = tfkl.LeakyReLU(0.2, name = name+'_leakyRelu')
+             
     def subpixel_reshape(x, factor):
         # input and output shapes
         bs, ih, iw, ic = x.get_shape().as_list()
@@ -64,21 +66,24 @@ class CnnT_block(tf.keras.layers.Layer):
         return x
     def call(self, x):
         x = self.convT(x)
+        x = self.batchNorm(x)
+        x = self.leakyReLU(x)
         x = CnnT_block.subpixel_reshape(x, self.factor)
         return x
 
 class Fc_block(tfkl.Layer):
-    def __init__(self, h, w, c, name='fc_block', **kwargs):
+    def __init__(self, h, w, c, name='FC_block', **kwargs):
         super(Fc_block, self).__init__(name=name, **kwargs)
-        self.l = tf.keras.Sequential([
-            tfkl.Dense(h*w*c, 
-                                  use_bias=True,
-                                  kernel_initializer='glorot_uniform',
-                                  bias_initializer='zeros'),
-            tfkl.Reshape((h,w,c))])
+        self.dense = tfkl.Dense(h*w*c, 
+                                use_bias=True,
+                                kernel_initializer='glorot_uniform',
+                                bias_initializer='zeros',
+                                name = name + '_dense')
+        self.reshape =  tfkl.Reshape((h,w,c), name=name + '_reshape')
         
     def call(self, x):
-        x = self.l(x)
+        x = self.dense(x)
+        x = self.reshape(x)
         return x
     
 class Encoder(tfkl.Layer):
@@ -97,9 +102,9 @@ class Encoder(tfkl.Layer):
                                              strides = (2,2),
                                              name="Cnn_block{0}".format(i)))
         
-        self.flatten = tfkl.Flatten(name='flatten')
-        self.mu_layer = tfkl.Dense(self.dim_x, name='dense_mu')
-        self.sigma_layer = tfkl.Dense(self.dim_x, activation='softplus')
+        self.flatten = tfkl.Flatten(name='Flatten')
+        self.mu_layer = tfkl.Dense(self.dim_x, name='Dense_mu')
+        self.sigma_layer = tfkl.Dense(self.dim_x, activation='softplus', name='Dense_sigma')
     
     def call(self, y):
         ph_steps = tf.shape(y)[1]
@@ -136,7 +141,7 @@ class Decoder(tfkl.Layer):
         
         h = int(config.dim_y[0] / (2**(len(self.filters))))
         w = int(config.dim_y[1] / (2**(len(self.filters))))
-        self.fc_block = Fc_block(h,w,self.filters[-1], name='fc_block')
+        self.fc_block = Fc_block(h,w,self.filters[-1], name='FC_block')
         self.cnnT_blocks = []
         for i in reversed(range(len(self.filters))):
             self.cnnT_blocks.append(CnnT_block(filters = self.filters[i]*2 if self.unet else self.filters[i]*4, 
@@ -153,7 +158,7 @@ class Decoder(tfkl.Layer):
                                                     kernel_initializer='glorot_normal',
                                                     bias_initializer='zeros',
                                                     activation=None,
-                                                    name='y_last'
+                                                    name='Y_last'
                                                    )
         self.mu_activation = tfkl.Activation(activation_y_mu)
         

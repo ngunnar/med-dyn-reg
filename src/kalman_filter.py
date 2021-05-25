@@ -18,7 +18,6 @@ def get_cholesky(A):
 
     is_pd, A_cholesky = isPD(A)
     if is_pd:
-        print("test")
         return A_cholesky
     
     B = (A + tf.transpose(A, perm=[0,1,3,2])) / 2
@@ -35,8 +34,8 @@ def get_cholesky(A):
         print("test")
         return A_cholesky
 
-    #spacing = tf.spacing(tf.linalg.norm(A))
-    spacing = np.spacing(tf.norm(A))
+    #spacing = tf.spacing(tf.norm(A))
+    spacing = np.spacing(np.linalg.norm(A))
     # The above is different from [1]. It appears that MATLAB's `chol` Cholesky
     # decomposition will accept matrixes with exactly 0-eigenvalue, whereas
     # Numpy's will not. So where [1] uses `eps(mineig)` (where `eps` is Matlab
