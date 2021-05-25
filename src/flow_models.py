@@ -62,7 +62,7 @@ class FLOW_VAE(VAE):
             tf.debugging.assert_equal(p_y_x.batch_shape, y.shape, "{0} vs {1}".format(p_y_x.batch_shape, y.shape))
         return p_y_x, phi_y_x, q_x_y, x
     
-    @tf.function
+    #@tf.function
     def predict(self, inputs):
         y = inputs[0]
         mask = inputs[1]
@@ -122,7 +122,7 @@ class FLOW_KVAE(KVAE):
 
         return p_y_x, phi_y_x, q_x_y, x, x_smooth, p_zt_xT
 
-    @tf.function
+    #@tf.function
     def predict(self, inputs):
         y_0 = inputs[2]#[:,0,...]
         y = inputs[0]
@@ -131,22 +131,10 @@ class FLOW_KVAE(KVAE):
         x = q_x_y.sample()
         
         #Smooth
-        mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
-        x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
-        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=tf.linalg.cholesky(x_cov_smooth))
-        if self.debug:
-            tf.debugging.assert_equal(self.config.dim_x, x_mu_smooth.shape[-1], "{0} vs {1}".format(self.config.dim_x, x_mu_smooth.shape[-1]))
-            tf.debugging.assert_equal(x_cov_smooth.shape[-2], x_cov_smooth.shape[-1],"{0} vs {1}".format(x_cov_smooth.shape[-2],x_cov_smooth.shape[-1]))
-            tf.debugging.assert_equal(self.config.dim_x, x_cov_smooth.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_cov_smooth.shape[-1]))
+        smooth_dist = self.kf.get_smooth_dist(x, mask)
         
         # Filter        
-        kalman_data = self.kf.kalman_filter.forward_filter(x, mask=mask)
-        _, mu_filt, Sigma_filt, mu_pred, Sigma_pred, x_mu_filt, x_covs_filt = kalman_data
-        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt, scale_tril=tf.linalg.cholesky(x_covs_filt))
-        if self.debug:
-            tf.debugging.assert_equal(self.config.dim_x, x_mu_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_mu_filt.shape[-1]))
-            tf.debugging.assert_equal(x_covs_filt.shape[-2], x_covs_filt.shape[-1],"{0} vs {1}".format(x_covs_filt.shape[-2], x_covs_filt.shape[-1]))
-            tf.debugging.assert_equal(self.config.dim_x, x_covs_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_covs_filt.shape[-1]))        
+        filt_dist = self.kf.get_filter_dist(x, mask)
          
         phi_hat_filt = self.decoder(filt_dist.sample()).sample()
         phi_hat_smooth = self.decoder(smooth_dist.sample()).sample()
@@ -236,7 +224,7 @@ class UFLOW_KVAE(FLOW_KVAE):
 
         return p_y_x, metrices
     
-    @tf.function
+    #@tf.function
     def predict(self, inputs):
         y_0 = inputs[2]#[:,0,...]
         y = inputs[0]

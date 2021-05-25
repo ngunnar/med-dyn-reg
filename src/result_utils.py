@@ -84,7 +84,7 @@ def get_x(y_true, masks, model):
         data.append([x_mu_smooth, std_smooth, x_mu_filt, std_filt, x_mu_filt_pred, std_filt_pred])
     return x_vae, data        
         
-def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None):
+def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, latex=True):
     length = y_true.shape[1]
     mask_none = np.zeros(shape=length).astype('bool')
     mask_impute = np.ones(shape=length).astype('bool')
@@ -101,9 +101,9 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None):
     x_mu_smooth_none, std_smooth_none, x_mu_filt_none, std_filt_none, x_mu_filt_pred_none, std_filt_pred_none = data[0]
     x_mu_smooth_impute, std_smooth_impute, x_mu_filt_impute, std_filt_impute, x_mu_filt_pred_impute, std_filt_pred_impute = data[1]
     x_mu_smooth_predict, std_smooth_predict, x_mu_filt_predict, std_filt_predict, x_mu_filt_pred_predict, std_filt_pred_predict = data[2]
-
-    #mpl.rcParams['text.usetex'] = True
-    #mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+    if latex:
+        mpl.rcParams['text.usetex'] = True
+        mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
 
     d = dimension
     mu_s_none = x_mu_smooth_none[0,:,d]
@@ -136,10 +136,10 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None):
             a.set_rasterization_zorder(1)
     handles = {}
 
-    l1, = axs[0,0].plot(t, mu_s_none, 'r', label=r"x_t|T")
-    l2, = axs[1,0].plot(t, mu_f_none, 'g', label=r"xt|t")
-    l3, = axs[2,0].plot(t, mu_p_none, 'y', label=r"x_t+1|t")
-    l4, = axs[0,0].plot(t, x_vae[0,:,d], 'b--', label=r"x")
+    l1, = axs[0,0].plot(t, mu_s_none, 'r', label=r"$\mu^{(x)}_{t\mid T}, \sigma^{(x)}_{t\mid T}$")
+    l2, = axs[1,0].plot(t, mu_f_none, 'g', label=r"$\mu^{(x)}_{t\mid t}, \sigma^{(x)}_{t\mid t}$")
+    l3, = axs[2,0].plot(t, mu_p_none, 'y', label=r"$\mu^{(x)}_{t+1\mid t}, \sigma^{(x)}_{t+1\mid t}$")
+    l4, = axs[0,0].plot(t, x_vae[0,:,d], 'b--', label=r"$x_{\text{obs}}$")
 
     # None
     axs[0,0].set_title(r"$t = [1, \dots, T]$", fontdict={'fontsize': 20, 'fontweight': 'medium'})
@@ -193,7 +193,7 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None):
     else:
         plt.show()
         
-def create_animation(y_true, steps, last, model, save_dir = None):
+def create_animation(y_true, steps, last, model, y_0 = None, save_dir = None):
     length = y_true.shape[1]
     mask = np.ones(shape=length).astype('bool')
     known = np.arange(length)
@@ -201,6 +201,8 @@ def create_animation(y_true, steps, last, model, save_dir = None):
     mask[known] = False    
     
     data = [y_true, mask[None,...]]
+    if y_0 is not None:
+        data.append(y_0)
     result = model.predict(data)
     y_smooth_val = next(item for item in result if item["name"] == "smooth")['data']
     y_vae_val = next(item for item in result if item["name"] == "vae")['data']

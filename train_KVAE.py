@@ -1,6 +1,4 @@
 import tensorflow as tf
-import numpy as np
-from collections import namedtuple
 import os
 import numpy as np
 import datetime
@@ -13,7 +11,7 @@ import argparse
 from config import get_config
 from src.models import KVAE
 from src.datasetLoader import TensorflowDatasetLoader
-from src.utils import plot_to_image, latent_plot, single_plot_to_image
+from src.utils import plot_to_image, latent_plot
 
 def main(dim_z=16, 
          gpu='0',
@@ -155,7 +153,6 @@ def main(dim_z=16,
                 tf.summary.text("R", tf.strings.as_string(R), step=epoch)
                 tf.summary.text("mu_0", tf.strings.as_string(mu_0), step=epoch)
                 tf.summary.text("Sigma_0", tf.strings.as_string(sigma_0), step=epoch)
-        
         
         if loss_training < best_loss and model.epoch >= config.only_vae_epochs:
             model.save_weights(model_log_dir + '/kvae_cardiac_best')

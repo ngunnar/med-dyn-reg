@@ -1,19 +1,15 @@
 import tensorflow as tf
-import numpy as np
-from collections import namedtuple
 import os
-import numpy as np
 import datetime
 import json
 import sys
-import time
 import tqdm
 import argparse
 
 from config import get_config
 from src.flow_models import UFLOW_KVAE
 from src.datasetLoader import TensorflowDatasetLoader
-from src.utils import plot_to_image, latent_plot, single_plot_to_image
+from src.utils import plot_to_image, latent_plot
 
 def main(dim_z=16, 
          gpu='0',
@@ -84,7 +80,6 @@ def main(dim_z=16,
     checkpoint = tf.train.Checkpoint(optimizer=model.opt, model=model)
     for epoch in range(model.epoch, config.num_epochs+1):
         #################### TRANING ##################################################
-        start_time = time.time()
         #beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
         #model.w_kl = model.config.kl_latent_loss_weight * beta
         #model.w_kf = model.config.kf_loss_weight * beta
@@ -95,8 +90,6 @@ def main(dim_z=16,
             train_log.set_postfix(metrices)
             train_log.update(1)
         train_log.close()
-
-        end_time = time.time()
 
         train_result = {m.name: m.result().numpy() for m in model.metrics}
         [m.reset_states() for m in model.metrics]

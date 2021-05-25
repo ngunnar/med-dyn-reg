@@ -43,6 +43,10 @@ def normalize_negative_one(video, axis):
     normalized_input = ((video.transpose() - _min)/(_max - _min)).transpose()
     return 2*normalized_input - 1
 
+def scale(video, mu, sigma):
+    return (video - mu) / sigma
+
+
 class KvaeDataLoader():
     def __init__(self, root, d_type, length, image_shape = (64,64), test=False):
         assert d_type in ['box', 'box_gravity', 'polygon', 'pong'], "d_type {0} not supported".format(d_type)
@@ -182,6 +186,10 @@ class TensorflowDatasetLoader():
             video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
             first_frame = cv2.resize(first_frame, dsize=self.image_shape,interpolation=cv2.INTER_CUBIC)
         
+        #mu = video.mean(axis=0)
+        #std = video.std(axis=0) + 1e-10
+        #video = scale(video, mu, std)
+        #first_frame = scale(first_frame, mu, std)
         video = normalize_negative_one(video, axis=(1,2))
         first_frame = normalize_negative_one(first_frame, axis=(0,1))
         return video, mask, first_frame

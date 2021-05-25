@@ -69,21 +69,36 @@ def isPD(B):
     except:
         return False, None
 
+class AlphaNetwork(tf.keras.layers.Layer):
+    def __init__(self, dim_RNN_alpha, k, name='alpha_rnn', **kwargs):
+        super(AlphaNetwork, self).__init__(name=name, **kwargs)
+        self.lstm = tf.keras.layers.LSTM(dim_RNN_alpha, return_sequences=True, name='LSTM')
+        self.linear = tf.keras.layers.Dense(k, name='Linear')
+        self.softmax = tf.keras.layers.Softmax(name='Softmax')
+    def call(self, inputs):
+        x = self.lstm(inputs)
+        x = self.linear(x)
+        return self.softmax(x)
+
+
 class KalmanFilter(tf.keras.layers.Layer):
     def __init__(self, config, name='kalman_filter', **kwargs):
         super(KalmanFilter, self).__init__(name=name, **kwargs)
         self.dim_z = config.dim_z
         self.dim_x = config.dim_x
-        
+
+        k = 3
+        self.alpha_network = AlphaNetwork(50, k)
+        self.alpha = tf.keras.Input(name='alpha', shape=(config.ph_steps, k, ), dtype=tf.dtypes.float32)#tf.Variable(dtype='float32', name='alpha')
         ## Parameters        
         A_init = tf.random_normal_initializer()
-        self.A = tf.Variable(initial_value=A_init(shape=(config.dim_z,config.dim_z)), 
+        self.A = tf.Variable(initial_value=A_init(shape=(k, config.dim_z,config.dim_z)), 
                              trainable=config.trainable_A, 
                              dtype="float32", 
                              name="A")
         
         C_init = tf.random_normal_initializer()
-        self.C = tf.Variable(initial_value=C_init(shape=(config.dim_x, config.dim_z)), 
+        self.C = tf.Variable(initial_value=C_init(shape=(k, config.dim_x, config.dim_z)), 
                              trainable=config.trainable_C, 
                              dtype="float32", 
                              name="C")
@@ -149,19 +164,28 @@ class KalmanFilter(tf.keras.layers.Layer):
         self.trainable_params.append(self.Sigma) if config.trainable_sigma else None
         
         self.kalman_filter = tfp.distributions.LinearGaussianStateSpaceModel(num_timesteps = config.ph_steps,
-                                                                             transition_matrix = self.A, 
+                                                                             transition_matrix = self.transition_matrix, 
                                                                              transition_noise = transition_noise, 
-                                                                             observation_matrix = self.C,
+                                                                             observation_matrix = self.observation_matrix,
                                                                              observation_noise = observation_noise, 
                                                                              initial_state_prior = initial_state_prior, 
                                                                              initial_step=0,
                                                                              validate_args=False, 
                                                                              allow_nan_stats=True,
                                                                              name='LinearGaussianStateSpaceModel')
-        
+    
+    def observation_matrix(self, t):
+        C = tf.reshape(tf.matmul(tf.gather(self.alpha, t, axis=1), tf.reshape(self.C, (-1, self.dim_x*self.dim_z))), (-1, self.dim_x, self.dim_z)) # Or alpha GLOBAL
+        return tf.linalg.LinearOperatorFullMatrix(C)
+
+    def transition_matrix(self, t):
+        A =  tf.reshape(tf.matmul(tf.gather(self.alpha, t, axis=1), tf.reshape(self.A, (-1, self.dim_z*self.dim_z))), (-1, self.dim_z, self.dim_z)) # Or alpha GLOBAL
+        return tf.linalg.LinearOperatorFullMatrix(A)
+
     def call(self, inputs):
         x = inputs[0]
         mask = inputs[1]
+        self.alpha = self.alpha_network(x) # TODO tf.multiply((1-mask), y)) + tf.multiply(mask, y_pred)
         
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
         p_zt_xT = tfp.distributions.MultivariateNormalTriL(mu_smooth, get_cholesky(Sigma_smooth))
@@ -190,8 +214,10 @@ class KalmanFilter(tf.keras.layers.Layer):
             log_prob_z_x : log p(z_t | x_{1:T}) for t = 1,..., T
         """
         # Sample from smoothing distribution
-        A = kalman_filter.get_transition_matrix_for_timestep
-        C = kalman_filter.get_observation_matrix_for_timestep
+        A = self.transition_matrix
+        #A = kalman_filter.get_transition_matrix_for_timestep
+        C = self.observation_matrix
+        #C = kalman_filter.get_observation_matrix_for_timestep
         transition_noise = self.kalman_filter.transition_noise
         observation_noise = self.kalman_filter.observation_noise
         
@@ -203,7 +229,8 @@ class KalmanFilter(tf.keras.layers.Layer):
         
         ## log p(x_t | z_t) for all t = 1,...,T
         # log N(x_t | Cz_t, R) -> log N(x_t - Cz_t|0, R) = log N(x_Cz_t | 0, R)
-        Cz_t = tf.matmul(C, tf.expand_dims(z_tilde, axis=3))[...,0]
+        #Cz_t = tf.matmul(C, tf.expand_dims(z_tilde, axis=3))[...,0]
+        Cz_t = tf.reshape(tf.matmul(C(np.arange(z_tilde.shape[1])), tf.reshape(z_tilde,(-1,z_tilde.shape[-1], 1))), (z_tilde.shape[0], -1, x.shape[-1]))
         x_Cz_t = x - Cz_t
         log_prob_x_z = observation_noise.log_prob(x_Cz_t)
         
@@ -213,7 +240,8 @@ class KalmanFilter(tf.keras.layers.Layer):
         
         ## log p(z_t | z_{t-1}) for t = 2,...,T
         # log p(z_t | z_{t-1}) = log N(z_t | Az_{t-1}, Q) = log N(z_t - Az_{t-1}| 0, Q) = log N(z_Az|0, Q)
-        Az_t = tf.matmul(A, tf.expand_dims(z_tilde[:,:-1, :], axis=3))[...,0] # Az_1, ..., Az_{T-1}
+        #Az_t = tf.matmul(A, tf.expand_dims(z_tilde[:,:-1, :], axis=3))[...,0] # Az_1, ..., Az_{T-1}
+        Az_t = tf.reshape(tf.matmul(A(np.arange(z_tilde.shape[1]-1)), tf.reshape(z_tilde[:,:-1, :], (-1, z_tilde.shape[-1], 1))),(z_tilde.shape[0],-1, z_tilde.shape[-1])) #[...,0]
         z_t = z_tilde[:, 1:, :] # z_2, ..., z_T
         z_Az = z_t - Az_t
         log_prob_z_z = transition_noise.log_prob(z_Az)
@@ -239,12 +267,14 @@ class KalmanFilter(tf.keras.layers.Layer):
             return filt_dist, filt_pred_dist
 
         return filt_dist
-    
+
     def get_params(self):
-        A = self.kalman_filter.transition_matrix
+        #A = self.kalman_filter.transition_matrix
+        A = self.A
         A_eig = tf.linalg.eig(A)[0]
         Q = self.kalman_filter.transition_noise.stddev()
-        C = self.kalman_filter.observation_matrix
+        #C = self.kalman_filter.observation_matrix
+        C = self.C
         R = self.kalman_filter.observation_noise.stddev()
         mu_0 = self.kalman_filter.initial_state_prior.mean()
         sigma_0 = self.kalman_filter.initial_state_prior.covariance()

@@ -4,14 +4,10 @@ import tensorflow_addons as tfa
 
 from .layers import Encoder, Decoder
 from .kalman_filter import KalmanFilter
-from .losses import log_p_kalman
 
 tfd = tfp.distributions
 tfk = tf.keras
 tfpl = tfp.layers
-
-import numpy as np
-import os
         
 class VAE(tfk.Model):
     def __init__(self, 
@@ -89,7 +85,7 @@ class VAE(tfk.Model):
             tf.debugging.assert_equal(x.shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(x.shape, (*y.shape[0:2], self.config.dim_x)))
         return p_y_x, q_x_y, x
     
-    @tf.function
+    #@tf.function
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -160,7 +156,7 @@ class KVAE(VAE):
     
     def get_loss(self, p_y_x, y, q_x_y, p_x, x, mask, x_smooth, p_zt_xT):
         logpy_x, logpx, logqx_y = super(KVAE, self).get_loss(p_y_x, y, q_x_y, p_x, x, mask)        
-        log_pz_z, log_px_z, log_p0, log_pz_x = log_p_kalman(x_smooth, p_zt_xT, self.kf.kalman_filter)
+        log_pz_z, log_px_z, log_p0, log_pz_x = self.kf.get_loss(x_smooth, p_zt_xT)
 
         log_pz_z = tf.multiply(log_pz_z, mask[:,1:])
         log_px_z = tf.multiply(log_px_z, mask)
@@ -231,7 +227,7 @@ class KVAE(VAE):
         p_y_x = self.decoder(x)
         return p_y_x, q_x_y, x, x_smooth, p_zt_xT
 
-    @tf.function
+    #@tf.function
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -239,22 +235,10 @@ class KVAE(VAE):
         x = q_x_y.sample()
         
         #Smooth
-        mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
-        x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
-        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=tf.linalg.cholesky(x_cov_smooth))
-        if self.debug:
-            tf.debugging.assert_equal(self.config.dim_x, x_mu_smooth.shape[-1], "{0} vs {1}".format(self.config.dim_x, x_mu_smooth.shape[-1]))
-            tf.debugging.assert_equal(x_cov_smooth.shape[-2], x_cov_smooth.shape[-1],"{0} vs {1}".format(x_cov_smooth.shape[-2],x_cov_smooth.shape[-1]))
-            tf.debugging.assert_equal(self.config.dim_x, x_cov_smooth.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_cov_smooth.shape[-1]))
+        smooth_dist = self.kf.get_smooth_dist(x, mask)
         
         # Filter        
-        kalman_data = self.kf.kalman_filter.forward_filter(x, mask=mask)
-        _, mu_filt, Sigma_filt, mu_pred, Sigma_pred, x_mu_filt, x_covs_filt = kalman_data
-        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt, scale_tril=tf.linalg.cholesky(x_covs_filt))
-        if self.debug:
-            tf.debugging.assert_equal(self.config.dim_x, x_mu_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_mu_filt.shape[-1]))
-            tf.debugging.assert_equal(x_covs_filt.shape[-2], x_covs_filt.shape[-1],"{0} vs {1}".format(x_covs_filt.shape[-2], x_covs_filt.shape[-1]))
-            tf.debugging.assert_equal(self.config.dim_x, x_covs_filt.shape[-1],"{0} vs {1}".format(self.config.dim_x, x_covs_filt.shape[-1]))        
+        filt_dist = self.kf.get_filter_dist(x, mask)       
          
         y_hat_filt = self.decoder(filt_dist.sample()).sample()
         y_hat_smooth = self.decoder(smooth_dist.sample()).sample()
@@ -264,7 +248,7 @@ class KVAE(VAE):
                {'name':'smooth', 'data': y_hat_smooth},
                {'name':'vae', 'data': y_hat_vae}]
     
-    @tf.function
+    #@tf.function
     def get_latents(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -272,16 +256,13 @@ class KVAE(VAE):
         q_x_y = self.encoder(y_true)
         x = q_x_y.sample()
         
-        # Smooth
-        mu_smooth, Sigma_smooth = self.kf.kalman_filter.posterior_marginals(x, mask = mask)
-        x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
+        #Smooth
+        smooth_dist = self.kf.get_smooth_dist(x, mask)
         
-        # Filter
-        kalman_data = self.kf.kalman_filter.forward_filter(x, mask=mask)
-        _, mu_filt, Sigma_filt, mu_pred, Sigma_pred, x_mu_filt, x_covs_filt = kalman_data  
-        x_mu_filt_pred, x_covs_filt_pred = self.kf.kalman_filter.latents_to_observations(mu_pred, Sigma_pred)
+        # Filter        
+        filt_dist, pred_dist = self.kf.get_filter_dist(x, mask, True)   
         
-        return x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred, x
+        return smooth_dist.mean(), smooth_dist.covariance(), filt_dist.mean(), filt_dist.covariance(), pred_dist.mean(), pred_dist.covariance(), x
     
     def sample(self, samples):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)

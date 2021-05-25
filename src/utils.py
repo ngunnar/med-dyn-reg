@@ -12,7 +12,7 @@ def plot(data, title, max_i, axs):
         if data.shape[-1] == 2:
             axs[k].imshow(draw_hsv(data[k,...]))            
         else:           
-            im = axs[k].imshow(data[k,...], cmap='gray')
+            axs[k].imshow(data[k,...], cmap='gray')
 
 def latent_plot(latents):
     x_mu_smooth = latents[0]
@@ -113,7 +113,8 @@ def plot_to_image(y, data_arg):
         l = l+l_org
     
     for d in data_arg:
-        plot(d['data'][0,::step,...].numpy(), d['name'].numpy().decode("utf-8"), l_org, axs[s:l])
+        #plot(d['data'][0,::step,...].numpy(), d['name'].numpy().decode("utf-8"), l_org, axs[s:l])
+        plot(d['data'][0,::step,...].numpy(), d['name'], l_org, axs[s:l])
         s = l
         l = l+l_org
     

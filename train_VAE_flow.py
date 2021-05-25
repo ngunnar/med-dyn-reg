@@ -1,12 +1,8 @@
 import tensorflow as tf
-import numpy as np
-from collections import namedtuple
 import os
-import numpy as np
 import datetime
 import json
 import sys
-import time
 import tqdm
 import argparse
 
