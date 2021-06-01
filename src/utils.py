@@ -16,36 +16,45 @@ def plot(data, title, max_i, axs):
             axs[k].imshow(data[k,...], cmap='gray')
 
 def latent_plot(latents):
-    x_mu_smooth = latents[0]
-    x_cov_smooth = latents[1]
-    x_mu_filt = latents[2]
-    x_covs_filt = latents[3]
-    x_mu_filt_pred = latents[4]
-    x_covs_filt_pred = latents[5]
-    x_vae = latents[6]
-
-    std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth[0,...]))
-    std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
-    std_pred = tf.sqrt(tf.linalg.diag_part(x_covs_filt_pred[0,...]))
-    t = np.arange(std_smooth.shape[0])
-    dims = std_smooth.shape[1]
-    figure, axs = plt.subplots(1,dims, figsize=(6.4*dims, 4.8))
-    for i in range(dims):
-        mu_s = x_mu_smooth[0,:,i]
-        stf_s = std_smooth[:,i]
-        mu_f = x_mu_filt[0,:,i]
-        stf_f = std_filt[:,i]
-        mu_p = x_mu_filt_pred[0,:,i]
-        stf_p = std_pred[:,i]
+    x_vae = latents['x']#latents[6]
+    
+    if 'smooth_mean' not in latents:
+        dims = x_vae.shape[2]
+        t = np.arange(x_vae.shape[1])
+        figure, axs = plt.subplots(1,dims, figsize=(6.4*dims, 4.8))
+        for i in range(dims):
+            axs[i].plot(t, x_vae[0,:,i],'--', label='x')
+    else:
+        x_mu_smooth = latents['smooth_mean']
+        x_cov_smooth = latents['smooth_cov']
+        x_mu_filt = latents['filt_mean']
+        x_covs_filt = latents['filt_cov']
+        x_mu_filt_pred = latents['pred_mean']
+        x_covs_filt_pred = latents['pred_cov']
         
-        axs[i].plot(t, x_vae[0,:,i],'--', label='x')
-        axs[i].plot(t, mu_s, 'r', label='x(t|T)')
-        axs[i].fill_between(t, mu_s-stf_s, mu_s+stf_s, alpha=0.2, color='r')
-        axs[i].plot(t, mu_f, 'g', label='x(t|t)')
-        axs[i].fill_between(t, mu_f-stf_f, mu_f+stf_f, alpha=0.2, color='g')
-        axs[i].plot(t, mu_p, 'y', label='x(t+1|t)')
-        axs[i].fill_between(t, mu_p-stf_p, mu_p+stf_p, alpha=0.2, color='y')
-        axs[i].legend(loc="upper left", ncol=1)
+
+        std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth[0,...]))
+        std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
+        std_pred = tf.sqrt(tf.linalg.diag_part(x_covs_filt_pred[0,...]))
+        t = np.arange(std_smooth.shape[0])
+        dims = std_smooth.shape[1]
+        figure, axs = plt.subplots(1,dims, figsize=(6.4*dims, 4.8))
+        for i in range(dims):
+            mu_s = x_mu_smooth[0,:,i]
+            stf_s = std_smooth[:,i]
+            mu_f = x_mu_filt[0,:,i]
+            stf_f = std_filt[:,i]
+            mu_p = x_mu_filt_pred[0,:,i]
+            stf_p = std_pred[:,i]
+            
+            axs[i].plot(t, x_vae[0,:,i],'--', label='x')
+            axs[i].plot(t, mu_s, 'r', label='x(t|T)')
+            axs[i].fill_between(t, mu_s-stf_s, mu_s+stf_s, alpha=0.2, color='r')
+            axs[i].plot(t, mu_f, 'g', label='x(t|t)')
+            axs[i].fill_between(t, mu_f-stf_f, mu_f+stf_f, alpha=0.2, color='g')
+            axs[i].plot(t, mu_p, 'y', label='x(t+1|t)')
+            axs[i].fill_between(t, mu_p-stf_p, mu_p+stf_p, alpha=0.2, color='y')
+            axs[i].legend(loc="upper left", ncol=1)
                     
     
     plt.tight_layout()

@@ -9,7 +9,8 @@ def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics',
                K = 1, 
                dim_x=16,
                dim_y=(112,112),
-               ph_steps=50):
+               ph_steps=50,
+               batch_size = 4):
     config_dict = {
         # DS
         "dim_y":dim_y,
@@ -21,8 +22,6 @@ def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics',
         'activation':'relu',
         'filter_size': 3,
         'filters':[64, 128, 256, 512],
-        'noise_pixel_var': 0.01,
-        'est_logvar':False,
         # LGSSM
         "dim_x": dim_x,
         "dim_z": dim_z,
@@ -43,7 +42,7 @@ def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics',
         "num_epochs": 100,
         "start_epoch": start_epoch,
         "model_path": model_path,
-        "batch_size": 4,
+        "batch_size": batch_size,
         "init_lr": 1e-4,
         "decay_steps": 20,
         "decay_rate": 0.85,

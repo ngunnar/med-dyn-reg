@@ -22,7 +22,8 @@ def main(dim_y = (112,112),
          ds_path = '/data/Niklas/EchoNet-Dynamics', 
          ds_size = None, 
          K = 1,
-         model_int = None):
+         model_int = None,
+         batch_size = 4):
     
     config, config_dict = get_config(ds_path = ds_path,
                                      ds_size = ds_size, 
@@ -32,8 +33,11 @@ def main(dim_y = (112,112),
                                      gpu = gpu, 
                                      start_epoch = start_epoch,
                                      model_path = model_path, 
-                                     K=K)
-    
+                                     K=K,
+                                     batch_size = batch_size)
+
+    os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
+
     output_first_frame = False
     if model_int == 0:
         model = VAE(config = config)
@@ -55,8 +59,6 @@ def main(dim_y = (112,112),
         log_folder = 'bkvae'
     else:
         raise NotImplemented
-
-    os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
     
     train_generator = TensorflowDatasetLoader(root = config.ds_path,
                                               image_shape = config.dim_y, 
@@ -73,9 +75,10 @@ def main(dim_y = (112,112),
                                              output_first_frame = output_first_frame)
     len_train = int(len(train_generator.idxs))
     len_test = int(len(test_generator.idxs))
+    print("Model name", model.name)
     print("Train size", len_train)
     print("Test size", len_test)
-    print("Number of batches: ", int(len(train_generator.idxs)/config.batch_size))
+    print("Number of batches: ", np.ceil(len(train_generator.idxs)/config.batch_size))
 
     train_dataset = train_generator.data
     train_dataset = train_dataset.shuffle(buffer_size=len_train).batch(config.batch_size)
@@ -83,7 +86,6 @@ def main(dim_y = (112,112),
     test_dataset = test_dataset.batch(config.batch_size)
     
     # model training
-    model = KVAE(config = config)
     if config.model_path is not None:
         model.load_weights(config.model_path)
     model.compile(int(len(train_generator.idxs)/config.batch_size))
@@ -106,9 +108,9 @@ def main(dim_y = (112,112),
         json.dump(config_dict, f)
 
     plot_train = list(train_generator.data.take(1))[0]
-    plot_train = [p[None,...] for p in plot_train[0]]
+    plot_train = [p[None,...] for p in plot_train]
     plot_test = list(test_generator.data.take(1))[0]
-    plot_test = [p[None,...] for p in plot_test[0]]
+    plot_test = [p[None,...] for p in plot_test]
 
     loss_sum_train_metric = tf.keras.metrics.Mean()
 

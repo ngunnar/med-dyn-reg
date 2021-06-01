@@ -109,6 +109,13 @@ class VAE(tfk.Model):
             tf.debugging.assert_equal(y_true.shape, y_hat.shape, "{0} vs {1}".format(y_true.shape, y_hat.shape))
         return [{'name':'vae', 'data': y_hat}]
     
+    @tf.function
+    def get_latents(self, inputs):
+        y_true = inputs[0]        
+        q_x_y = self.encoder(y_true)
+        x = q_x_y.sample()
+        return {"x":x}
+
     def compile(self, num_batches):
         super(VAE, self).compile()
         self.num_batches = num_batches
@@ -126,10 +133,10 @@ class VAE(tfk.Model):
         test_args = self.predict(test_data)
         test_latent = self.get_latents(test_data)
         
-        return {"Training data": plot_to_image(train_data[0], train_arg),
+        return {"Training data": plot_to_image(train_data[0], train_args),
                 "Test data":  plot_to_image(test_data[0], test_args),
-                "Latent Training data":latent_plot(latent_train),
-                "Latent Test data":latent_plot(latent_test)}
+                "Latent Training data":latent_plot(train_latent),
+                "Latent Test data":latent_plot(test_latent)}
     
     
     def train_step(self, inputs):
@@ -289,7 +296,13 @@ class KVAE(VAE):
         # Filter        
         filt_dist, pred_dist = self.kf.get_filter_dist(x, mask, True)   
         
-        return smooth_dist.mean(), smooth_dist.covariance(), filt_dist.mean(), filt_dist.covariance(), pred_dist.mean(), pred_dist.covariance(), x
+        return {"smooth_mean": smooth_dist.mean(),
+                "smooth_cov": smooth_dist.covariance(),
+                "filt_mean": filt_dist.mean(),
+                "filt_cov": filt_dist.covariance(),
+                "pred_mean": pred_dist.mean(), 
+                "pred_cov": pred_dist.covariance(),
+                "x": x}
     
     def sample(self, samples):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)

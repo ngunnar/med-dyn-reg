@@ -19,8 +19,8 @@ def warp(phi, y_0):
     return y_pred
 
 class fVAE(VAE):
-    def __init__(self, config, name='flow_vae', output_channels = 2, **kwargs):
-        super(FLOW_VAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
+    def __init__(self, config, name='fKVAE', output_channels = 2, **kwargs):
+        super(fVAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
         self.grad_flow_metric = tfk.metrics.Mean(name = 'grad flow ↓')
         
     def call(self, inputs):
@@ -78,8 +78,8 @@ class fVAE(VAE):
 
 
 class fKVAE(KVAE):
-    def __init__(self, config, name="flow_kvae", output_channels=2, **kwargs):
-        super(FLOW_KVAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
+    def __init__(self, config, name="fKVAE", output_channels=2, **kwargs):
+        super(fKVAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
         self.grad_flow_metric = tfk.metrics.Mean(name = 'grad flow ↓')
     
     def call(self, inputs):
@@ -207,11 +207,11 @@ class Bspline(tf.keras.layers.Layer):
         sigma = tf.ones_like(mu, dtype='float32') * 0.01
         p_y_x = tfp.distributions.Normal(mu, sigma)
         
-        return p_y_x
+        return p_y_x, scaled_grid
     
-class bKVAE(FLOW_KVAE):
-    def __init__(self, config, name='spline_kvae', **kwargs):
-        super(FLOW_KVAE, self).__init__(name=name, config=config, **kwargs)
+class bKVAE(fKVAE):
+    def __init__(self, config, name='bKVAE', **kwargs):
+        super(bKVAE, self).__init__(name=name, config=config, **kwargs)
         assert config.dim_x == 32, "dim x 32 is the only supported atm"
         self.decoder = Bspline(config.dim_y, config.dim_x)
     
@@ -231,7 +231,7 @@ class bKVAE(FLOW_KVAE):
             x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(p_zt_xT.mean(), p_zt_xT.covariance())
             p_xt_xT = tfp.distributions.MultivariateNormalTriL(x_mu_smooth, tf.linalg.cholesky(x_cov_smooth))
             x_smooth = p_xt_xT.sample()
-        p_y_x = self.decoder([y_0, x])
+        p_y_x, scaled_grid = self.decoder([y_0, x])
         
         logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, p_zt_xT)
         
@@ -253,7 +253,7 @@ class bKVAE(FLOW_KVAE):
     
     @tf.function
     def predict(self, inputs):
-        y_0 = inputs[2]#[:,0,...]
+        y_0 = inputs[2]
         y = inputs[0]
         mask = inputs[1]
         q_x_y = self.encoder(y) 
@@ -264,21 +264,26 @@ class bKVAE(FLOW_KVAE):
         
         # Filter        
         filt_dist, filt_pred_dist = self.kf.get_filter_dist(x, mask, True)
-         
-        y_hat_filt = self.decoder([y_0, filt_dist.sample()]).sample()
-        y_hat_pred = self.decoder([y_0, filt_pred_dist.sample()]).sample()
-        y_hat_smooth = self.decoder([y_0, smooth_dist.sample()]).sample()
-        y_hat_vae = self.decoder([y_0, x]).sample()  
         
+        p_y_x_filt, grid_filt = self.decoder([y_0, filt_dist.sample()])
+        p_y_x_pred, grid_pred = self.decoder([y_0, filt_pred_dist.sample()])
+        p_y_x_smooth, grid_smooth = self.decoder([y_0, smooth_dist.sample()])
+        p_y_x_vae, grid_vae = self.decoder([y_0, x])
+
+        y_hat_filt = p_y_x_filt.sample()
+        y_hat_pred = p_y_x_pred.sample()
+        y_hat_smooth = p_y_x_smooth.sample()
+        y_hat_vae = p_y_x_vae.sample()
+
         return [{'name':'filt', 'data': y_hat_filt},
                 {'name':'pred', 'data': y_hat_pred},
                 {'name':'smooth', 'data': y_hat_smooth},
                 {'name':'vae', 'data': y_hat_vae}]      
 
 from .layers import Encoder
-class UFLOW_KVAE(FLOW_KVAE):
+class ufKVAE(fKVAE):
     def __init__(self, config, name='UFLOW_KVAE', **kwargs):
-        super(UFLOW_KVAE, self).__init__(name=name, config=config, unet_decoder = True, **kwargs)
+        super(ufKVAE, self).__init__(name=name, config=config, unet_decoder = True, **kwargs)
         self.u_encoder = Encoder(self.config, unet=True)
     
     def forward(self, y, mask, y_0):
