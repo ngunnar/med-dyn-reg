@@ -19,7 +19,11 @@ def main(gpu='0',
          ds_size=None,
          log_folder='vae_flow'):
     
-    config, config_dict = get_config(ds_path, ds_size, None, gpu, start_epoch, model_path)
+    config, config_dict = get_config(ds_path=ds_path,
+                                     ds_size=ds_size,
+                                     gpu=gpu,
+                                     start_epoch=start_epoch,
+                                     model_path=model_path)
 
     os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
 

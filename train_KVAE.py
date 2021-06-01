@@ -13,15 +13,22 @@ from src.models import KVAE
 from src.datasetLoader import TensorflowDatasetLoader
 from src.utils import plot_to_image, latent_plot
 
-def main(dim_z=16, 
+def main(dim_z=32, 
          gpu='0',
          model_path=None, 
          start_epoch=1, 
          prefix=None, 
          ds_path='/data/Niklas/EchoNet-Dynamics', 
          ds_size=None, 
-         log_folder='kvae'):
-    config, config_dict = get_config(ds_path, ds_size, dim_z, gpu, start_epoch, model_path)
+         log_folder='kvae',
+         K = 1):
+    config, config_dict = get_config(ds_path=ds_path,
+                                     ds_size=ds_size, 
+                                     dim_z=dim_z, 
+                                     gpu=gpu, 
+                                     start_epoch=start_epoch,
+                                     model_path=model_path, 
+                                     K=K)
 
     os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
     

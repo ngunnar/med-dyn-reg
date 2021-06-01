@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import matplotlib.animation as animation
 import numpy as np
+import math
 import tensorflow as tf
 
 def get_config(path):
@@ -33,10 +34,13 @@ def plot_latents(data, model, save_dir=None):
     custom_ylim = (-0.2, 0.2)
 
     handles = {}
-    t = np.arange(50)
-    fig, axs = plt.subplots(2,8, figsize=(30,5), sharey=False,sharex=True)
+    t = np.arange(data[0].shape[1])
+    d = x_mu_smooth.shape[-1]
+    
+    k,l = math.ceil(d/8), min(d,8)
+    fig, axs = plt.subplots(k,l, figsize=(5*l,5*k), sharey=False,sharex=True)
     axs = axs.flatten()
-    for i in range(len(axs)):
+    for i in range(x_mu_smooth.shape[-1]):
         mu_s = x_mu_smooth[0,:,i]
         mu_f = x_mu_filt[0,:,i]
         mu_p = x_mu_filt_pred[0,:,i]
@@ -65,7 +69,7 @@ def plot_latents(data, model, save_dir=None):
             handles['Obs'] = l4
         #axs[i].set_ylim(-0.3,0.3)
     plt.tight_layout()
-    lgd = plt.legend(handles=handles.values(), loc='lower center', ncol=4, bbox_to_anchor=[-5.0, -0.8])
+    lgd = plt.legend(handles=handles.values(), loc='lower center', ncol=4, bbox_to_anchor=[-5.0/8*l, -0.8])
     if save_dir is not None:
         plt.savefig(save_dir, bbox_extra_artists=[lgd], bbox_inches='tight')
     else:
@@ -75,7 +79,7 @@ def get_x(y_true, masks, model):
     x_vae = model.encoder(y_true).sample()
     data = []
     for mask in masks:
-        latent_data = model.get_latents([y_true, mask])
+        latent_data = model.get_latents([y_true, mask[None,...]])
         x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred, x = latent_data
 
         std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth))
@@ -104,31 +108,39 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, l
     if latex:
         mpl.rcParams['text.usetex'] = True
         mpl.rcParams['text.latex.preamble'] = [r'\usepackage{amsmath}'] #for \text command
+        l1_label = r"$\mu^{(x)}_{t\mid T}, \sigma^{(x)}_{t\mid T}$"
+        l2_label = r"$\mu^{(x)}_{t\mid t}, \sigma^{(x)}_{t\mid t}$"
+        l3_label = r"$\mu^{(x)}_{t+1\mid t}, \sigma^{(x)}_{t+1\mid t}$"
+        l4_label = r"$x_{\text{obs}}$"
+    else:
+        l1_label = r"x(t|T)"
+        l2_label = r"x(t|t)"
+        l3_label = r"x(t+1|t)"
+        l4_label = r"x"
 
     d = dimension
     mu_s_none = x_mu_smooth_none[0,:,d]
-    std_s_none = std_smooth_none[:,d]
+    std_s_none = std_smooth_none[0,:,d]
     mu_f_none = x_mu_filt_none[0,:,d]
-    std_f_none = std_filt_none[:,d]
+    std_f_none = std_filt_none[0,:,d]
     mu_p_none = x_mu_filt_pred_none[0,:,d]
-    std_p_none = std_filt_pred_none[:,d]
+    std_p_none = std_filt_pred_none[0,:,d]
 
     mu_s_impute = x_mu_smooth_impute[0,:,d]
-    std_s_impute = std_smooth_impute[:,d]
+    std_s_impute = std_smooth_impute[0,:,d]
     mu_f_impute = x_mu_filt_impute[0,:,d]
-    std_f_impute = std_filt_impute[:,d]
+    std_f_impute = std_filt_impute[0,:,d]
     mu_p_impute = x_mu_filt_pred_impute[0,:,d]
-    std_p_impute = std_filt_pred_impute[:,d]
+    std_p_impute = std_filt_pred_impute[0,:,d]
 
     mu_s_pred = x_mu_smooth_predict[0,:,d]
-    std_s_pred = std_smooth_predict[:,d]
+    std_s_pred = std_smooth_predict[0,:,d]
     mu_f_pred = x_mu_filt_predict[0,:,d]
-    std_f_pred = std_filt_predict[:,d]
+    std_f_pred = std_filt_predict[0,:,d]
     mu_p_pred = x_mu_filt_pred_predict[0,:,d]
-    std_p_pred = std_filt_pred_predict[:,d]
+    std_p_pred = std_filt_pred_predict[0,:,d]
 
-    t = np.arange(50)
-
+    t = np.arange(length)
     fig, axs = plt.subplots(3,3, sharey=True, sharex=True, figsize=(10,5))
     for ax in axs:
         for a in ax:
@@ -136,10 +148,10 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, l
             a.set_rasterization_zorder(1)
     handles = {}
 
-    l1, = axs[0,0].plot(t, mu_s_none, 'r', label=r"$\mu^{(x)}_{t\mid T}, \sigma^{(x)}_{t\mid T}$")
-    l2, = axs[1,0].plot(t, mu_f_none, 'g', label=r"$\mu^{(x)}_{t\mid t}, \sigma^{(x)}_{t\mid t}$")
-    l3, = axs[2,0].plot(t, mu_p_none, 'y', label=r"$\mu^{(x)}_{t+1\mid t}, \sigma^{(x)}_{t+1\mid t}$")
-    l4, = axs[0,0].plot(t, x_vae[0,:,d], 'b--', label=r"$x_{\text{obs}}$")
+    l1, = axs[0,0].plot(t, mu_s_none, 'r', label=l1_label)
+    l2, = axs[1,0].plot(t, mu_f_none, 'g', label=l2_label)
+    l3, = axs[2,0].plot(t, mu_p_none, 'y', label=l3_label)
+    l4, = axs[0,0].plot(t, x_vae[0,:,d], 'b--', label=l4_label)
 
     # None
     axs[0,0].set_title(r"$t = [1, \dots, T]$", fontdict={'fontsize': 20, 'fontweight': 'medium'})
@@ -224,11 +236,11 @@ def create_animation(y_true, steps, last, model, y_0 = None, save_dir = None):
             cmap = 'gray'
 
         if np.all(d[i,...] == 0.0):
-            return ax.imshow(d[i,...]+1.0, cmap=cmap, vmin=-1, vmax=1)
+            return ax.imshow(d[i,...]+1.0, cmap=cmap, vmin=0, vmax=1)
         elif d.shape[0] > i:
-            return ax.imshow(d[i,...], cmap=cmap,vmin=-1, vmax=1)
+            return ax.imshow(d[i,...], cmap=cmap,vmin=0, vmax=1)
         else:
-            return ax.imshow(np.zeros_like(d[0,...]), cmap=cmap,vmin=-1, vmax=1)
+            return ax.imshow(np.zeros_like(d[0,...]), cmap=cmap,vmin=0, vmax=1)
    
     ims = []
     k = 0

@@ -1,10 +1,19 @@
 from collections import namedtuple
 
-def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics', ds_size=None, dim_z=32, gpu='0', start_epoch=1, model_path=None):
+def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics', 
+               ds_size=None, 
+               dim_z=32, 
+               gpu='0', 
+               start_epoch=1, 
+               model_path=None, 
+               K = 1, 
+               dim_x=16,
+               dim_y=(112,112),
+               ph_steps=50):
     config_dict = {
         # DS
-        "dim_y":(64,64),
-        "ph_steps":50,    
+        "dim_y":dim_y,
+        "ph_steps":ph_steps,    
         "period": 2,
         "ds_path": ds_path,
         "ds_size": ds_size,
@@ -15,11 +24,11 @@ def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics', ds_size=None, dim_z=32
         'noise_pixel_var': 0.01,
         'est_logvar':False,
         # LGSSM
-        "dim_x": 16,
+        "dim_x": dim_x,
         "dim_z": dim_z,
         "noise_emission": 0.03,
         "noise_transition": 0.08,
-        "init_cov": 5.0, #30.0
+        "init_cov": 1.0, #30.0
         "trainable_A":True,
         "trainable_C":True,
         "trainable_R":True,
@@ -28,6 +37,7 @@ def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics', ds_size=None, dim_z=32
         "trainable_sigma":True,
         "sigma_full":False,
         "sample_z": False,
+        "K": K,
         # Training
         "gpu": gpu,
         "num_epochs": 100,
@@ -38,7 +48,7 @@ def get_config(ds_path = '/data/Niklas/EchoNet-Dynamics', ds_size=None, dim_z=32
         "decay_steps": 20,
         "decay_rate": 0.85,
         "max_grad_norm": 150.0,
-        "scale_reconstruction": 1.0,
+        "scale_reconstruction": 1.0,#1e-4,
         "kl_latent_loss_weight": 1.0,
         "kf_loss_weight": 1.0,
         "kl_growth": 3.0,

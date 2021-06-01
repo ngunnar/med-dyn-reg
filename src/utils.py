@@ -8,7 +8,8 @@ import tensorflow as tf
 def plot(data, title, max_i, axs):
     for k in range(0, max_i):
         if k==0:
-            axs[k].title.set_text(title)
+            #axs[k].title.set_text(title)
+            axs[k].set_ylabel(title)
         if data.shape[-1] == 2:
             axs[k].imshow(draw_hsv(data[k,...]))            
         else:           
@@ -105,7 +106,8 @@ def plot_to_image(y, data_arg):
     l = l_org
     figure, axs = plt.subplots(len(data_arg)+1,l, sharex=True, sharey=True, figsize=(40,10))
     axs = axs.flatten()
-    [ax.axis('off') for ax in axs]
+    [ax.axes.xaxis.set_ticks([]) for ax in axs]
+    [ax.axes.yaxis.set_ticks([]) for ax in axs]
     
     if y is not None:
         plot(y[0,::step,...], 'True image', l_org, axs[s:l])
@@ -113,8 +115,8 @@ def plot_to_image(y, data_arg):
         l = l+l_org
     
     for d in data_arg:
-        #plot(d['data'][0,::step,...].numpy(), d['name'].numpy().decode("utf-8"), l_org, axs[s:l])
-        plot(d['data'][0,::step,...].numpy(), d['name'], l_org, axs[s:l])
+        plot(d['data'][0,::step,...].numpy(), d['name'].numpy().decode("utf-8"), l_org, axs[s:l])
+        #plot(d['data'][0,::step,...].numpy(), d['name'], l_org, axs[s:l])
         s = l
         l = l+l_org
     

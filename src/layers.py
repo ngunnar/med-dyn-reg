@@ -120,7 +120,8 @@ class Encoder(tfkl.Layer):
         x = self.flatten(x)
         
         mu = tf.reshape(self.mu_layer(x), (-1, ph_steps, self.dim_x))
-        sigma = tf.reshape(self.sigma_layer(x), (-1, ph_steps, self.dim_x))
+        # if variance is zero, log_p(x) will be NaN and gradients will be NaN, therefore adding epsilson + softmax
+        sigma = tf.reshape(self.sigma_layer(x), (-1, ph_steps, self.dim_x)) + tf.keras.backend.epsilon()
         
         q_x_y = tfp.distributions.Normal(mu, sigma)
 
@@ -149,7 +150,6 @@ class Decoder(tfkl.Layer):
                                                kernel = config.filter_size,
                                                strides = (1,1),
                                                name="CnnT_block{0}".format(i)))
-        
         self.cnnT_block_last = tfkl.Conv2D(filters=self.output_channels,
                                                     kernel_size=1,
                                                     strides=1,
@@ -161,8 +161,6 @@ class Decoder(tfkl.Layer):
                                                     name='Y_last'
                                                    )
         self.mu_activation = tfkl.Activation(activation_y_mu)
-        
-        self.flatten = tfkl.Flatten()
         
     def call(self, inputs):
         if self.unet:
@@ -181,16 +179,15 @@ class Decoder(tfkl.Layer):
                 f = feats[-i][:,None,...]
                 f = tf.reshape(tf.repeat(f, ph_steps, axis=1), (-1, *f.shape[2:]))
                 x = tf.concat([x, f], axis=-1)
-            x = l(x)            
+            x = l(x)          
             i += 1
         
         y = self.cnnT_block_last(x) # (bs*s, h, w, 2)
-
         y_mu = self.mu_activation(y)
         y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
         
         y_mu = tf.reshape(y_mu, (bs, ph_steps, *self.dim_y, -1)) # (b*s,dim_y, dim_y, c) -> (b,s,dim_y, dim_y, c)
-        y_sigma = tf.reshape(y_sigma, (bs, ph_steps, *self.dim_y,-1))
+        y_sigma = tf.reshape(y_sigma, (bs, ph_steps, *self.dim_y,-1))  + tf.keras.backend.epsilon()
         if self.output_channels == 1:
             y_mu = y_mu[...,0] # (b*s,dim_y, dim_y, 1) -> (b,s,dim_y, dim_y)
             y_sigma = y_sigma[...,0]

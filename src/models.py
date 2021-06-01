@@ -3,11 +3,24 @@ import tensorflow_probability as tfp
 import tensorflow_addons as tfa
 
 from .layers import Encoder, Decoder
-from .kalman_filter import KalmanFilter
+from .kalman_filter import KalmanFilter as Linear_KF
+from .kalman_filter_k import KalmanFilterK as K_KF
+
+from .utils import plot_to_image, latent_plot
 
 tfd = tfp.distributions
 tfk = tf.keras
 tfpl = tfp.layers
+
+import numpy as np
+import os
+def save_if_error(gradients, inputs, model):
+    if any([np.any(np.isnan(g.numpy())) for g in gradients]):
+        path = './error'
+        os.makedirs(path, exist_ok=True)
+        [np.save(path + '/input_{0}.npy'.format(j), inputs[j]) for j in range(len(inputs))]
+        model.save_weights(path + '/error_model')
+        raise Exception("Metrices is NaN")
         
 class VAE(tfk.Model):
     def __init__(self, 
@@ -41,7 +54,8 @@ class VAE(tfk.Model):
     def get_loss(self, py_x, y, qx_y, px, x, mask):
         logpx = tf.reduce_sum(tf.multiply(tf.reduce_sum(px.log_prob(x), axis=[2]), mask), axis=-1)
         logqx_y = tf.reduce_sum(tf.multiply(tf.reduce_sum(qx_y.log_prob(x), axis=[2]), mask), axis=-1)
-        logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum(py_x.log_prob(y), axis=[2,3]), mask), axis=-1)
+        #logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum(py_x.log_prob(y), axis=[2,3]), mask), axis=-1)
+        logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum((py_x.mean() - y)**2, axis=[2,3]), mask), axis=-1)
                 
         self.log_py_x_metric.update_state(logpy_x)
         self.log_px_metric.update_state(logpx)
@@ -50,7 +64,7 @@ class VAE(tfk.Model):
         y_pred = py_x.sample()
         if self.debug:
             tf.debugging.assert_equal(y_pred.shape, y.shape)
-        ssim = tf.image.ssim(y_pred, y, max_val=2.0, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
+        ssim = tf.image.ssim(y_pred, y, max_val=1.0, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
         self.ssim_metric.update_state(ssim)
         
         return logpy_x, logpx, logqx_y
@@ -85,7 +99,7 @@ class VAE(tfk.Model):
             tf.debugging.assert_equal(x.shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(x.shape, (*y.shape[0:2], self.config.dim_x)))
         return p_y_x, q_x_y, x
     
-    #@tf.function
+    @tf.function
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -105,6 +119,19 @@ class VAE(tfk.Model):
                                                                      staircase=True)
         self.opt = tf.keras.optimizers.Adam(lr_schedule)  
     
+    def get_image_summary(self, train_data, test_data):
+        train_args = self.predict(train_data)
+        train_latent = self.get_latents(train_data)
+        
+        test_args = self.predict(test_data)
+        test_latent = self.get_latents(test_data)
+        
+        return {"Training data": plot_to_image(train_data[0], train_arg),
+                "Test data":  plot_to_image(test_data[0], test_args),
+                "Latent Training data":latent_plot(latent_train),
+                "Latent Test data":latent_plot(latent_test)}
+    
+    
     def train_step(self, inputs):
         with tf.GradientTape() as tape:
             _, metrices = self(inputs)
@@ -119,6 +146,7 @@ class VAE(tfk.Model):
                     variables = self.trainable_variables
         
         gradients = tape.gradient(loss, variables)
+        save_if_error(gradients, inputs, self)
         gradients, _ = tf.clip_by_global_norm(gradients, self.config.max_grad_norm)
         self.opt.apply_gradients(zip(gradients, variables))
         metrices['loss'] = loss.numpy()
@@ -151,7 +179,10 @@ class KVAE(VAE):
         super(KVAE, self).__init__(name=name, elbo_name = elbo_name, config=config, **kwargs)
         self.log_pz_x_metric = tfk.metrics.Mean(name = 'log p(z|x) ↓')
         self.log_pxz_metric = tfk.metrics.Mean(name = 'log p(x,z) ↑')
-        self.kf = KalmanFilter(self.config)
+        if config.K == 1:
+            self.kf = Linear_KF(self.config)
+        else:
+            self.kf = K_KF(self.config)
         self.w_kf = self.config.kf_loss_weight
     
     def get_loss(self, p_y_x, y, q_x_y, p_x, x, mask, x_smooth, p_zt_xT):
@@ -179,10 +210,6 @@ class KVAE(VAE):
         
         elbo = logpy_x - logqx_y + log_pxz - log_pz_x
         loss = -(self.w_recon * logpy_x - self.w_kl*logqx_y + self.w_kf * (log_pxz - log_pz_x))
-        
-        self.log_py_x_metric.update_state(logpy_x)
-        self.log_px_metric.update_state(logpx)
-        self.log_qx_y_metric.update_state(logpy_x)        
         
         self.elbo_metric.update_state(elbo)
         self.loss_metric.update_state(loss)
@@ -227,7 +254,7 @@ class KVAE(VAE):
         p_y_x = self.decoder(x)
         return p_y_x, q_x_y, x, x_smooth, p_zt_xT
 
-    #@tf.function
+    @tf.function
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
@@ -248,7 +275,7 @@ class KVAE(VAE):
                {'name':'smooth', 'data': y_hat_smooth},
                {'name':'vae', 'data': y_hat_vae}]
     
-    #@tf.function
+    @tf.function
     def get_latents(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]

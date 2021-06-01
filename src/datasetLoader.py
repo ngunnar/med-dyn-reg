@@ -48,10 +48,9 @@ def scale(video, mu, sigma):
 
 
 class KvaeDataLoader():
-    def __init__(self, root, d_type, length, image_shape = (64,64), test=False):
+    def __init__(self, root, d_type, image_shape = (64,64), test=False, output_first_frame = False):
         assert d_type in ['box', 'box_gravity', 'polygon', 'pong'], "d_type {0} not supported".format(d_type)
         self.image_shape = image_shape
-        self.length = length
         if test:
             f = '{0}_test.npz'.format(d_type)
         else:
@@ -59,22 +58,37 @@ class KvaeDataLoader():
         
         npzfile = np.load(os.path.join(root, f))
         self.videos = npzfile['images'].astype(np.float32)
-        data = tf.data.Dataset.from_generator(
-            self.generator(),
-            tuple([tf.float32, tf.bool]),
-            tuple([(self.length, *self.image_shape),(self.length)]))
+        
+        if output_first_frame:
+            data = tf.data.Dataset.from_generator(
+                self.flow_generator(),
+                tuple([tf.float32, tf.bool, tf.float32]),
+                tuple([(self.videos.shape[1], *self.image_shape),(self.videos.shape[1]), self.image_shape]))
+        else:    
+            data = tf.data.Dataset.from_generator(
+                self.generator(),
+                tuple([tf.float32, tf.bool]),
+                tuple([(self.videos.shape[1], *self.image_shape),(self.videos.shape[1])]))
         self.data = data
     
     def _read_video(self, video):
         video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
-        video = normalize_negative_one(video)[:self.length,...]
+        video = normalize_negative_one(video, axis=(1,2))
         mask = np.zeros(video.shape[0], dtype='bool')
-        return video, mask
-
+        return video, mask, video[0,...]
+    
+    
+    def flow_generator(self):
+        def gen():
+            for v in self.videos:
+                video, mask, first = self._read_video(v)
+                yield tuple([video, mask, first])
+        return gen
+    
     def generator(self):
         def gen():
             for v in self.videos:
-                video, mask = self._read_video(v)
+                video, mask,_ = self._read_video(v)
                 yield tuple([video, mask])
         return gen
 
@@ -182,7 +196,7 @@ class TensorflowDatasetLoader():
             i, j = np.random.randint(0, 2 * self.pad, 2)
             video = temp[:, :, i:(i + h), j:(j + w)]
 
-        if self.image_shape is not None:
+        if self.image_shape is not None and self.image_shape != video[0].shape:
             video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
             first_frame = cv2.resize(first_frame, dsize=self.image_shape,interpolation=cv2.INTER_CUBIC)
         
@@ -190,8 +204,10 @@ class TensorflowDatasetLoader():
         #std = video.std(axis=0) + 1e-10
         #video = scale(video, mu, std)
         #first_frame = scale(first_frame, mu, std)
-        video = normalize_negative_one(video, axis=(1,2))
-        first_frame = normalize_negative_one(first_frame, axis=(0,1))
+        #video = normalize_negative_one(video, axis=(1,2))
+        #first_frame = normalize_negative_one(first_frame, axis=(0,1))
+        video /= 255.
+        first_frame /= 255.
         return video, mask, first_frame
 
     def generator(self):
@@ -330,8 +346,10 @@ class EvalTensorflowDatasetLoader():
             trace1 = img_as_bool(resize(trace1, self.image_shape)).astype('float32')
             trace2 = img_as_bool(resize(trace2, self.image_shape)).astype('float32')
 
-        video = normalize_negative_one(video, axis=(1,2))
-        first_frame = normalize_negative_one(first_frame, axis=(0,1))
+        #video = normalize_negative_one(video, axis=(1,2))
+        #first_frame = normalize_negative_one(first_frame, axis=(0,1))
+        video /= 255.
+        first_frame /= 255.
         return video, mask, first_frame, trace1, trace2, trace1_index, trace2_index
     
 short = ['0X106766224781FAE2.avi',
