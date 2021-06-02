@@ -75,9 +75,9 @@ class KalmanFilter(tf.keras.layers.Layer):
         self.dim_z = config.dim_z
         self.dim_x = config.dim_x
         
-        ## Parameters        
-        A_init = tf.random_normal_initializer()
-        self.A = tf.Variable(initial_value=A_init(shape=(config.dim_z,config.dim_z)), 
+        ## Parameters
+        A_init = tf.eye(config.dim_z)
+        self.A = tf.Variable(initial_value=A_init, 
                              trainable=config.trainable_A, 
                              dtype="float32", 
                              name="A")
@@ -111,34 +111,19 @@ class KalmanFilter(tf.keras.layers.Layer):
                                                                            scale_tril = self.Sigma)
         
         # w ~ N(0,Q)
-        if True:
-            init_Q_np = np.ones(config.dim_z).astype('float32') * config.noise_transition
-        else:    
-            init_Q_np = np.eye(config.dim_z).astype('float32') * config.noise_transition
+        init_Q_np = np.ones(config.dim_z).astype('float32') * config.noise_transition
             
         init_Q = tf.constant_initializer(init_Q_np)
         self.Q = tf.Variable(initial_value=init_Q(shape=init_Q_np.shape), trainable=config.trainable_Q, dtype='float32', name="Q")
-        if True:
-            self.transition_noise = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(config.dim_z, dtype='float32'), 
+        self.transition_noise = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(config.dim_z, dtype='float32'), 
                                                                         scale_diag=self.Q) #FULLY_REPARAMETERIZED by default
-        else:
-            self.transition_noise = tfp.distributions.MultivariateNormalTriL(loc=tf.zeros(config.dim_z, dtype='float32'), 
-                                                                                  scale_tril=self.Q) #FULLY_REPARAMETERIZED by default
         # v ~ N(0,R)
-        if True:
-            #init_R_np = np.random.rand(config.dim_x).astype(np.float32)
-            init_R_np = np.ones(config.dim_x).astype('float32') * config.noise_emission
-        else:    
-            init_R_np = np.eye(config.dim_x).astype('float32') * config.noise_emission
+        init_R_np = np.ones(config.dim_x).astype('float32') * config.noise_emission
         init_R = tf.constant_initializer(init_R_np)
         self.R = tf.Variable(initial_value=init_R(shape=init_R_np.shape), trainable=config.trainable_R, dtype='float32', name="R" )
         #FULLY_REPARAMETERIZED by default
-        if True:
-            self.observation_noise = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(config.dim_x, dtype='float32'),
+        self.observation_noise = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(config.dim_x, dtype='float32'),
                                                                          scale_diag=self.R) 
-        else:
-            self.observation_noise = tfp.distributions.MultivariateNormalTriL(loc=tf.zeros(config.dim_x, dtype='float32'),
-                                                                                   scale_tril=self.R)
         # Trainable
         self.trainable_params = []
         self.trainable_params.append(self.A) if config.trainable_A else None
@@ -223,17 +208,17 @@ class KalmanFilter(tf.keras.layers.Layer):
     def get_smooth_dist(self, x, mask):
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
         x_mu_smooth, x_cov_smooth = self.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
-        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=tf.linalg.cholesky(x_cov_smooth))
+        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=get_cholesky(x_cov_smooth))
         return smooth_dist
 
     def get_filter_dist(self, x, mask, get_pred=False):
         kalman_data = self.kalman_filter.forward_filter(x, mask=mask)
         _, mu_filt, Sigma_filt, mu_pred, Sigma_pred, x_mu_filt, x_covs_filt = kalman_data
-        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt, scale_tril=tf.linalg.cholesky(x_covs_filt))
+        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt, scale_tril=get_cholesky(x_covs_filt))
 
         if get_pred:
             x_mu_filt_pred, x_covs_filt_pred = self.kalman_filter.latents_to_observations(mu_pred, Sigma_pred)
-            filt_pred_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt_pred, scale_tril=tf.linalg.cholesky(x_covs_filt_pred))
+            filt_pred_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt_pred, scale_tril=get_cholesky(x_covs_filt_pred))
             return filt_dist, filt_pred_dist
 
         return filt_dist

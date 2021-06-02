@@ -117,9 +117,9 @@ def main(dim_y = (112,112),
     checkpoint = tf.train.Checkpoint(optimizer=model.opt, model=model)
     for epoch in range(model.epoch, config.num_epochs+1):
         #################### TRANING ##################################################
-        beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
-        model.w_kl = model.config.kl_latent_loss_weight * beta
-        model.w_kf = model.config.kf_loss_weight * beta
+        #beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
+        #model.w_kl = model.config.kl_latent_loss_weight * beta
+        #model.w_kf = model.config.kf_loss_weight * beta
         train_log = tqdm.tqdm(total=len_train//config.batch_size, desc='Train {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
         for i, inputs in enumerate(train_dataset):
             loss, metrices = model.train_step(inputs)
@@ -179,7 +179,7 @@ if __name__ == "__main__":
     parser.add_argument('-saved_model','--saved_model', help='model path if continue running model (default:None)', default=None)
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)
     
-    parser.add_argument('-gpu','--gpus', help='comma separated list of GPUs (default -1 (CPU))', default=-1)
+    parser.add_argument('-gpu','--gpus', help='comma separated list of GPUs (default -1 (CPU))', default='-1')
     parser.add_argument('-prefix','--prefix', help='predix for log folder (default:None)', default=None)
     
     # data set

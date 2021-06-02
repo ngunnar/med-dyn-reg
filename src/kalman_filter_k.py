@@ -3,72 +3,6 @@ import tensorflow_probability as tfp
 import numpy as np
 from .kalman_filter import KalmanFilter
 
-# tfp.distributions.LinearGaussianStateSpaceModel.posterior_marginals can return non positive covariance matrix (round error?) 
-def get_cholesky(A):
-    """Find the nearest positive-definite matrix to input
-
-    A Python/Numpy port of John D'Errico's `nearestSPD` MATLAB code [1], which
-    credits [2].
-
-    [1] https://www.mathworks.com/matlabcentral/fileexchange/42885-nearestspd
-
-    [2] N.J. Higham, "Computing a nearest symmetric positive semidefinite
-    matrix" (1988): https://doi.org/10.1016/0024-3795(88)90223-6
-    """
-
-    is_pd, A_cholesky = isPD(A)
-    if is_pd:
-        return A_cholesky
-    
-    B = (A + tf.transpose(A, perm=[0,1,3,2])) / 2
-    s, u, V = tf.linalg.svd(B)
-    V = tf.transpose(V, perm=[0,1,3,2])
-    S = tf.linalg.diag(s)
-    H = tf.matmul(V, tf.matmul(S, V), transpose_a=True)
-    A2 = (B + H) / 2
-
-    A3 = (A2 + tf.transpose(A2, perm=[0,1,3,2])) / 2
-    
-    is_pd, A_cholesky = isPD(A3)
-    if is_pd:
-        print("test")
-        return A_cholesky
-
-    #spacing = tf.spacing(tf.norm(A))
-    spacing = np.spacing(np.linalg.norm(A))
-    # The above is different from [1]. It appears that MATLAB's `chol` Cholesky
-    # decomposition will accept matrixes with exactly 0-eigenvalue, whereas
-    # Numpy's will not. So where [1] uses `eps(mineig)` (where `eps` is Matlab
-    # for `np.spacing`), we use the above definition. CAVEAT: our `spacing`
-    # will be much larger than [1]'s `eps(mineig)`, since `mineig` is usually on
-    # the order of 1e-16, and `eps(1e-16)` is on the order of 1e-34, whereas
-    # `spacing` will, for Gaussian random matrixes of small dimension, be on
-    # othe order of 1e-16. In practice, both ways converge, as the unit test
-    # below suggests.
-    I = np.eye(A.shape[0])
-    k = 1
-    while True:
-        print(k)
-        #mineig = np.min(np.real(la.eigvals(A3)))
-        is_pd, A_cholesky = isPD(A3)
-        if is_pd:
-            return A_cholesky
-        
-        mineig = tf.math.reduce_min(tf.math.real(tf.linalg.eigvals(A3)))
-        A3 += I * (-mineig * k**2 + spacing)
-        k += 1
-
-    return A3
-
-
-def isPD(B):
-    """Returns true when input is positive-definite, via Cholesky"""
-    try:
-        A = tf.linalg.cholesky(B)
-        return True, A
-    except:
-        return False, None
-
 class AlphaNetwork(tf.keras.layers.Layer):
     def __init__(self, dim_RNN_alpha, k, name='alpha_rnn', **kwargs):
         super(AlphaNetwork, self).__init__(name=name, **kwargs)
@@ -87,12 +21,12 @@ class KalmanFilterK(KalmanFilter):
         self.dim_z = config.dim_z
         self.dim_x = config.dim_x
 
-        k = 3
+        k = config.K
         self.alpha_network = AlphaNetwork(50, k)
-        self.alpha = tf.keras.Input(name='alpha', shape=(config.ph_steps, k, ), dtype=tf.dtypes.float32)#tf.Variable(dtype='float32', name='alpha')
+        self.alpha = tf.keras.Input(name='alpha', shape=(config.ph_steps, k, ), dtype=tf.dtypes.float32)
         ## Parameters        
-        A_init = tf.random_normal_initializer()
-        self.A = tf.Variable(initial_value=A_init(shape=(k, config.dim_z,config.dim_z)), 
+        A_init = tf.eye(config.dim_z, batch_shape=[k])
+        self.A = tf.Variable(initial_value=A_init, 
                              trainable=config.trainable_A, 
                              dtype="float32", 
                              name="A")
@@ -115,11 +49,11 @@ class KalmanFilterK(KalmanFilter):
                                                                              name='LinearGaussianStateSpaceModel')
     
     def observation_matrix(self, t):
-        C = tf.reshape(tf.matmul(tf.gather(self.alpha, t, axis=1), tf.reshape(self.C, (-1, self.dim_x*self.dim_z))), (-1, self.dim_x, self.dim_z)) # Or alpha GLOBAL
+        C = tf.reshape(tf.matmul(tf.gather(self.alpha, t, axis=1), tf.reshape(self.C, (-1, self.dim_x*self.dim_z))), (-1, self.dim_x, self.dim_z))
         return tf.linalg.LinearOperatorFullMatrix(C)
 
     def transition_matrix(self, t):
-        A =  tf.reshape(tf.matmul(tf.gather(self.alpha, t, axis=1), tf.reshape(self.A, (-1, self.dim_z*self.dim_z))), (-1, self.dim_z, self.dim_z)) # Or alpha GLOBAL
+        A =  tf.reshape(tf.matmul(tf.gather(self.alpha, t, axis=1), tf.reshape(self.A, (-1, self.dim_z*self.dim_z))), (-1, self.dim_z, self.dim_z))
         return tf.linalg.LinearOperatorFullMatrix(A)
 
     def call(self, inputs):

@@ -55,7 +55,7 @@ class VAE(tfk.Model):
         logpx = tf.reduce_sum(tf.multiply(tf.reduce_sum(px.log_prob(x), axis=[2]), mask), axis=-1)
         logqx_y = tf.reduce_sum(tf.multiply(tf.reduce_sum(qx_y.log_prob(x), axis=[2]), mask), axis=-1)
         #logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum(py_x.log_prob(y), axis=[2,3]), mask), axis=-1)
-        logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum((py_x.mean() - y)**2, axis=[2,3]), mask), axis=-1)
+        logpy_x = -tf.reduce_sum(tf.multiply(tf.reduce_sum((py_x.mean() - y)**2, axis=[2,3]), mask), axis=-1)
                 
         self.log_py_x_metric.update_state(logpy_x)
         self.log_px_metric.update_state(logpx)

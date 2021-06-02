@@ -18,6 +18,33 @@ def warp(phi, y_0):
     y_pred = tf.reshape(y_pred, (-1, ph_steps, *(dim_y,dim_y)))
     return y_pred
 
+def flow2grid(flow):
+    bs = flow.shape[0]
+    ph_steps = flow.shape[1]
+    dim_y = flow.shape[-3:-1]
+    
+    # grid image
+    img_grid = np.zeros((bs, ph_steps, *dim_y), dtype='float32')
+    img_grid[:,:,10::10,:] = 1.0
+    img_grid[:,:,:,10::10] = 1.0
+    
+    # meshgrid
+    y_range = tf.range(start=0, limit=dim_y[0])/dim_y[0]
+    x_range = tf.range(start=0, limit=dim_y[1])/dim_y[1]
+    y_grid, x_grid = tf.meshgrid(y_range, x_range, indexing="ij")
+    grid = tf.cast(tf.stack((y_grid, x_grid), -1), 'float32')
+    
+    # flow2grid
+    f = -tf.reshape(flow, (bs*ph_steps, -1, flow.shape[-1]))
+    transform_grid = tf.repeat(grid[None,...], bs*ph_steps, axis=0)
+    transform_grid = tf.reshape(transform_grid, (bs*ph_steps, -1, grid.shape[-1]))
+    
+    scaled_grid = transform_grid*np.asarray(dim_y)[None, None,...] + f
+    
+    transform_grid = tfa.image.interpolate_bilinear(tf.reshape(img_grid, (bs*ph_steps, *dim_y, 1)), scaled_grid)
+    transform_grid = tf.reshape(transform_grid, flow.shape[:-1])
+    return transform_grid
+
 class fVAE(VAE):
     def __init__(self, config, name='fKVAE', output_channels = 2, **kwargs):
         super(fVAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
@@ -69,12 +96,14 @@ class fVAE(VAE):
         y_0 = inputs[2]
         p_y_x, phi_y_x, q_x_y, x = self.forward(y, mask, y_0)
         phi_hat = phi_y_x.sample()
+        
         y_hat = p_y_x.sample()
         if self.debug:
             tf.debugging.assert_equal(y.shape, y_hat.shape, "{0} vs {1}".format(y.shape, y_hat.shape))
             tf.debugging.assert_equal((*y.shape, 2), phi_hat.shape, "{0} vs {1}".format((*y.shape, 2), phi_hat.shape))
         return [{'name':'vae', 'data': y_hat},
-               {'name':'flow', 'data': phi_hat}]         
+               {'name':'flow', 'data': phi_hat},
+               {'name':'grid', 'data': flow2grid(phi_hat)}]         
 
 
 class fKVAE(KVAE):
@@ -144,39 +173,41 @@ class fKVAE(KVAE):
 
         return [{'name':'filt', 'data': y_hat_filt},
                 {'name':'filt_flow', 'data': phi_hat_filt},
+                {'name':'filt_grid', 'data': flow2grid(phi_hat_filt)},                
                 {'name':'pred', 'data': y_hat_pred},
                 {'name':'pred_flow', 'data': phi_hat_pred},
+                {'name':'pred_grid', 'data': flow2grid(phi_hat_pred)},
                 {'name':'smooth', 'data': y_hat_smooth},
                 {'name':'smooth_flow', 'data': phi_hat_smooth},
+                {'name':'smooth_grid', 'data': flow2grid(phi_hat_smooth)},
                 {'name':'vae', 'data': y_hat_vae},
-                {'name':'vae_flow', 'data': phi_hat_vae}]
+                {'name':'vae_flow', 'data': phi_hat_vae},
+                {'name':'vae_grid', 'data': flow2grid(phi_hat_vae)}]
     
     def sample(self, samples):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)
         return self.decoder(x_samples).sample()
 
 class Bspline(tf.keras.layers.Layer):
-    def __init__(self, dim_y, dim_x, **kwargs):
-        super(Bspline,self).__init__(**kwargs)
+    def __init__(self, dim_y, dim_x, name='Bspline', **kwargs):
+        super(Bspline,self).__init__(name=name, **kwargs)
         y_range = tf.range(start=0, limit=dim_y[0])/dim_y[0]
         x_range = tf.range(start=0, limit=dim_y[1])/dim_y[1]
         y_grid, x_grid = tf.meshgrid(y_range, x_range, indexing="ij")
         self.grid = tf.cast(tf.stack((y_grid, x_grid), -1), 'float32')
-        self.dim_x = dim_x   
-    
+        self.dim_x = dim_x
+        self.dim_y = dim_y
+        assert np.sqrt(self.dim_x/2).is_integer()
+        
     def body(i, d, p, s):
         d_new = tfa.image.interpolate_bilinear(p[...,i:i+1], s)
         return (i+1, tf.concat([d,d_new], axis=-1), p, s)
     
     def call(self, inputs):
-        image = inputs[0] # (bs, weigth, heigth, 1)
-        bs = tf.shape(image)[0]
-        parameters = inputs[1] /10 #(bs, t, w, h, 2)
+        parameters = inputs
+        bs = parameters.shape[0]
         ph_steps = parameters.shape[1]
-        
-        org_image = tf.repeat(image[:,None,...], ph_steps, axis=1)
-        image = tf.reshape(org_image, (-1, org_image.shape[2],org_image.shape[3], 1))
-        parameters = tf.reshape(parameters, (bs*ph_steps, np.sqrt(self.dim_x/2), np.sqrt(self.dim_x/2), 2))
+        parameters = tf.reshape(parameters, (bs*ph_steps, int(np.sqrt(self.dim_x/2)), int(np.sqrt(self.dim_x/2)), 2))
                  
         transform_grid = tf.repeat(self.grid[None,...], bs*ph_steps, axis=0)
         transform_grid = tf.reshape(transform_grid, (bs*ph_steps, -1, self.grid.shape[-1]))
@@ -193,93 +224,23 @@ class Bspline(tf.keras.layers.Layer):
                                      parameters,
                                      scaled_points],
                           shape_invariants=[i0.get_shape(), 
-                                            tf.TensorShape([None, image.shape[1]*image.shape[2], None]), #bs 
+                                            tf.TensorShape([None, np.prod(self.dim_y), None]), #bs 
                                             parameters.get_shape(), 
                                             scaled_points.get_shape()])        
-        transform_grid = (transform_grid + d)
-        transform_grid = tf.reshape(transform_grid, (bs*ph_steps, *self.grid.shape))
-        
-        scaled_grid = transform_grid * np.asarray(image.shape[1:-1])[None, None,...]
-        scaled_grid = tf.reshape(scaled_grid, (bs*ph_steps, -1, 2))
-        sample = tfa.image.interpolate_bilinear(image, scaled_grid)
-        
-        mu = tf.reshape(sample, (org_image.shape))
+        flow = -d*np.asarray(self.dim_y)[None, None,...]
+        flow = tf.reshape(flow, (bs, ph_steps, *self.dim_y, 2))
+        mu = flow
         sigma = tf.ones_like(mu, dtype='float32') * 0.01
-        p_y_x = tfp.distributions.Normal(mu, sigma)
+        phi_y_x = tfp.distributions.Normal(mu, sigma)
         
-        return p_y_x, scaled_grid
+        return phi_y_x
     
 class bKVAE(fKVAE):
     def __init__(self, config, name='bKVAE', **kwargs):
         super(bKVAE, self).__init__(name=name, config=config, **kwargs)
         assert config.dim_x == 32, "dim x 32 is the only supported atm"
         self.decoder = Bspline(config.dim_y, config.dim_x)
-    
-    def call(self, inputs):
-        y = inputs[0]
-        mask = inputs[1]
-        y_0 = inputs[2]
         
-        q_x_y = self.encoder(y)
-
-        x = q_x_y.sample()
-        x_kf = x
-        
-        p_zt_xT = self.kf([x_kf, mask])
-        x_smooth = x_kf
-        if self.config.sample_z:
-            x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(p_zt_xT.mean(), p_zt_xT.covariance())
-            p_xt_xT = tfp.distributions.MultivariateNormalTriL(x_mu_smooth, tf.linalg.cholesky(x_cov_smooth))
-            x_smooth = p_xt_xT.sample()
-        p_y_x, scaled_grid = self.decoder([y_0, x])
-        
-        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, p_zt_xT)
-        
-        elbo = logpy_x - logqx_y + log_pxz - log_pz_x
-        loss = -(self.w_recon * logpy_x - self.w_kl* - logqx_y + self.w_kf * (log_pxz - log_pz_x))
-        
-        self.elbo_metric.update_state(elbo)
-        self.loss_metric.update_state(loss)
-        self.add_loss(loss)
-
-        
-        metrices = {'log p(y|x)': tf.reduce_mean(logpy_x).numpy(), 
-                    'log q(x|y)': tf.reduce_mean(logqx_y).numpy(), 
-                    'log p(x,z)': tf.reduce_mean(log_pxz).numpy(), 
-                    'log p(z|x)': tf.reduce_mean(log_pz_x).numpy()
-                   }
-
-        return p_y_x, metrices
-    
-    @tf.function
-    def predict(self, inputs):
-        y_0 = inputs[2]
-        y = inputs[0]
-        mask = inputs[1]
-        q_x_y = self.encoder(y) 
-        x = q_x_y.sample()
-        
-        #Smooth
-        smooth_dist = self.kf.get_smooth_dist(x, mask)
-        
-        # Filter        
-        filt_dist, filt_pred_dist = self.kf.get_filter_dist(x, mask, True)
-        
-        p_y_x_filt, grid_filt = self.decoder([y_0, filt_dist.sample()])
-        p_y_x_pred, grid_pred = self.decoder([y_0, filt_pred_dist.sample()])
-        p_y_x_smooth, grid_smooth = self.decoder([y_0, smooth_dist.sample()])
-        p_y_x_vae, grid_vae = self.decoder([y_0, x])
-
-        y_hat_filt = p_y_x_filt.sample()
-        y_hat_pred = p_y_x_pred.sample()
-        y_hat_smooth = p_y_x_smooth.sample()
-        y_hat_vae = p_y_x_vae.sample()
-
-        return [{'name':'filt', 'data': y_hat_filt},
-                {'name':'pred', 'data': y_hat_pred},
-                {'name':'smooth', 'data': y_hat_smooth},
-                {'name':'vae', 'data': y_hat_vae}]      
-
 from .layers import Encoder
 class ufKVAE(fKVAE):
     def __init__(self, config, name='UFLOW_KVAE', **kwargs):

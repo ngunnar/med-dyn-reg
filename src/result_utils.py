@@ -19,12 +19,19 @@ def get_config(path):
 def load_model(path, Model, file):
     config, config_dict = get_config(path)
     model = Model(config = config)
-    model.load_weights(path + '/' + file).expect_partial()
+    model.load_weights(path + '/' + file)#.expect_partial()
     return model, config
 
 def plot_latents(data, model, save_dir=None):
     latent_data = model.get_latents(data)
-    x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred, x = latent_data
+    
+    x_mu_smooth = latent_data['smooth_mean']
+    x_cov_smooth = latent_data['smooth_cov']
+    x_mu_filt = latent_data['filt_mean']
+    x_covs_filt = latent_data['filt_cov']
+    x_mu_filt_pred = latent_data['pred_mean']
+    x_covs_filt_pred = latent_data['pred_cov']
+    x = latent_data['x']
     
     std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth[0,...]))
     std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
@@ -80,7 +87,14 @@ def get_x(y_true, masks, model):
     data = []
     for mask in masks:
         latent_data = model.get_latents([y_true, mask[None,...]])
-        x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred, x = latent_data
+        x_mu_smooth = latent_data['smooth_mean']
+        x_cov_smooth = latent_data['smooth_cov']
+        x_mu_filt = latent_data['filt_mean']
+        x_covs_filt = latent_data['filt_cov']
+        x_mu_filt_pred = latent_data['pred_mean']
+        x_covs_filt_pred = latent_data['pred_cov']
+        x = latent_data['x']
+        #x_mu_smooth, x_cov_smooth, x_mu_filt, x_covs_filt, x_mu_filt_pred, x_covs_filt_pred, x = latent_data
 
         std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth))
         std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt))
