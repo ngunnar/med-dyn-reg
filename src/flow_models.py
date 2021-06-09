@@ -4,6 +4,7 @@ import tensorflow_probability as tfp
 import tensorflow_addons as tfa
 
 tfk = tf.keras
+tfpl = tfp.layers
 
 from .models import VAE, KVAE
 from .losses import grad_loss
@@ -18,16 +19,19 @@ def warp(phi, y_0):
     y_pred = tf.reshape(y_pred, (-1, ph_steps, *(dim_y,dim_y)))
     return y_pred
 
-def flow2grid(flow):
+def flow2grid(flow, d = 10):
     bs = flow.shape[0]
     ph_steps = flow.shape[1]
     dim_y = flow.shape[-3:-1]
     
+    l = np.array(dim_y.as_list()) // d
     # grid image
-    img_grid = np.zeros((bs, ph_steps, *dim_y), dtype='float32')
-    img_grid[:,:,10::10,:] = 1.0
-    img_grid[:,:,:,10::10] = 1.0
-    
+    #img_grid = np.zeros((bs, ph_steps, *dim_y), dtype='float32')
+    img_grid = np.zeros((bs, *dim_y), dtype='float32')
+    img_grid[:,10::10,:] = 1.0
+    img_grid[:,:,10::10] = 1.0
+    return warp(flow, img_grid)
+    '''
     # meshgrid
     y_range = tf.range(start=0, limit=dim_y[0])/dim_y[0]
     x_range = tf.range(start=0, limit=dim_y[1])/dim_y[1]
@@ -44,11 +48,12 @@ def flow2grid(flow):
     transform_grid = tfa.image.interpolate_bilinear(tf.reshape(img_grid, (bs*ph_steps, *dim_y, 1)), scaled_grid)
     transform_grid = tf.reshape(transform_grid, flow.shape[:-1])
     return transform_grid
-
+    '''
 class fVAE(VAE):
     def __init__(self, config, name='fKVAE', output_channels = 2, **kwargs):
         super(fVAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
         self.grad_flow_metric = tfk.metrics.Mean(name = 'grad flow ↓')
+        self.dist = tfpl.IndependentNormal(config.dim_y)
         
     def call(self, inputs):
         y = inputs[0]
@@ -84,7 +89,9 @@ class fVAE(VAE):
         phi_mu = phi_y_x.mean() #bs, t, w, h, 2
         y_mu = warp(phi_mu, y_0)
         y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
-        p_y_x = tfp.distributions.Normal(loc=y_mu, scale=y_sigma)
+        y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
+        y_sigma = tf.reshape(y_sigma, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
+        p_y_x = self.dist(tf.concat([y_mu, y_sigma], axis=-1))
         if self.debug:
             tf.debugging.assert_equal(p_y_x.batch_shape, y.shape, "{0} vs {1}".format(p_y_x.batch_shape, y.shape))
         return p_y_x, phi_y_x, q_x_y, x
@@ -103,13 +110,22 @@ class fVAE(VAE):
             tf.debugging.assert_equal((*y.shape, 2), phi_hat.shape, "{0} vs {1}".format((*y.shape, 2), phi_hat.shape))
         return [{'name':'vae', 'data': y_hat},
                {'name':'flow', 'data': phi_hat},
-               {'name':'grid', 'data': flow2grid(phi_hat)}]         
+               {'name':'grid', 'data': flow2grid(phi_hat)}] 
+
+    def info(self):
+        y = tf.keras.layers.Input(shape=(self.config.ph_steps, *self.config.dim_y), batch_size=1)
+        mask = tf.keras.layers.Input(shape=(self.config.ph_steps), batch_size=1)
+        first_frame = tf.keras.layers.Input(shape=self.config.dim_y, batch_size=1)
+        inputs = [y, mask, first_frame]
+
+        self._print_info(inputs)        
 
 
 class fKVAE(KVAE):
     def __init__(self, config, name="fKVAE", output_channels=2, **kwargs):
         super(fKVAE, self).__init__(name=name, output_channels = output_channels, config=config, **kwargs)
         self.grad_flow_metric = tfk.metrics.Mean(name = 'grad flow ↓')
+        self.dist = tfpl.IndependentNormal(config.dim_y)
     
     def call(self, inputs):
         y = inputs[0]
@@ -143,7 +159,9 @@ class fKVAE(KVAE):
         phi_sample = phi_y_x.mean() #bs, t, w, h, 2
         y_mu = warp(phi_sample, y_0)
         y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
-        p_y_x = tfp.distributions.Normal(loc=y_mu, scale=y_sigma)
+        y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
+        y_sigma = tf.reshape(y_sigma, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
+        p_y_x = self.dist(tf.concat([y_mu, y_sigma], axis=-1))
 
         return p_y_x, phi_y_x, q_x_y, x, x_smooth, p_zt_xT
 
@@ -184,6 +202,15 @@ class fKVAE(KVAE):
                 {'name':'vae_flow', 'data': phi_hat_vae},
                 {'name':'vae_grid', 'data': flow2grid(phi_hat_vae)}]
     
+    
+    def info(self):
+        y = tf.keras.layers.Input(shape=(self.config.ph_steps, *self.config.dim_y), batch_size=1)
+        mask = tf.keras.layers.Input(shape=(self.config.ph_steps), batch_size=1)
+        first_frame = tf.keras.layers.Input(shape=self.config.dim_y, batch_size=1)
+        inputs = [y, mask, first_frame]
+
+        self._print_info(inputs)
+
     def sample(self, samples):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)
         return self.decoder(x_samples).sample()
@@ -197,6 +224,7 @@ class Bspline(tf.keras.layers.Layer):
         self.grid = tf.cast(tf.stack((y_grid, x_grid), -1), 'float32')
         self.dim_x = dim_x
         self.dim_y = dim_y
+        self.dist = tfpl.IndependentNormal((*dim_y,2))
         assert np.sqrt(self.dim_x/2).is_integer()
         
     def body(i, d, p, s):
@@ -205,7 +233,7 @@ class Bspline(tf.keras.layers.Layer):
     
     def call(self, inputs):
         parameters = inputs
-        bs = parameters.shape[0]
+        bs = tf.shape(parameters)[0]
         ph_steps = parameters.shape[1]
         parameters = tf.reshape(parameters, (bs*ph_steps, int(np.sqrt(self.dim_x/2)), int(np.sqrt(self.dim_x/2)), 2))
                  
@@ -215,8 +243,7 @@ class Bspline(tf.keras.layers.Layer):
         scaled_points = transform_grid * (np.array(parameters.shape[1:-1], dtype='float32') - 1)[None,None,...]
         
         cond = lambda i, d, p, s: i < p.shape[-1]
-        i0=tf.constant(1)
-        tmp = tfa.image.interpolate_bilinear(parameters[...,0:1], scaled_points)
+        i0 = tf.constant(1)
         _, d,_,_ = tf.while_loop(cond, 
                           Bspline.body, 
                           loop_vars=[i0, 
@@ -231,7 +258,10 @@ class Bspline(tf.keras.layers.Layer):
         flow = tf.reshape(flow, (bs, ph_steps, *self.dim_y, 2))
         mu = flow
         sigma = tf.ones_like(mu, dtype='float32') * 0.01
-        phi_y_x = tfp.distributions.Normal(mu, sigma)
+
+        mu = tf.reshape(mu, (-1, mu.shape[1], np.prod(mu.shape[2:])))
+        sigma = tf.reshape(sigma, (-1, mu.shape[1], np.prod(mu.shape[2:])))
+        phi_y_x = self.dist(tf.concat([mu, sigma], axis=-1))
         
         return phi_y_x
     
@@ -267,7 +297,9 @@ class ufKVAE(fKVAE):
         phi = phi_y_x.mean()
         y_mu = warp(phi, y_0)
         y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
-        p_y_x = tfp.distributions.Normal(loc=y_mu, scale=y_sigma)
+        y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
+        y_sigma = tf.reshape(y_sigma, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
+        p_y_x = self.normal(tf.concat([y_mu, y_sigma], axis=-1))
         return p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, p_zt_xT
     
     def call(self, inputs):

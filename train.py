@@ -4,7 +4,7 @@ import numpy as np
 import datetime
 import json
 import sys
-import tqdm
+from tqdm import tqdm
 import argparse
 
 from config import get_config
@@ -75,10 +75,10 @@ def main(dim_y = (112,112),
                                              output_first_frame = output_first_frame)
     len_train = int(len(train_generator.idxs))
     len_test = int(len(test_generator.idxs))
-    print("Model name", model.name)
-    print("Train size", len_train)
-    print("Test size", len_test)
-    print("Number of batches: ", np.ceil(len(train_generator.idxs)/config.batch_size))
+    tqdm.write("Model name {0}".format(model.name))
+    tqdm.write("Train size {0}".format(len_train))
+    tqdm.write("Test size {0}".format(len_test))
+    tqdm.write("Number of batches: {0}".format(np.ceil(len(train_generator.idxs)/config.batch_size)))
 
     train_dataset = train_generator.data
     train_dataset = train_dataset.shuffle(buffer_size=len_train).batch(config.batch_size)
@@ -117,10 +117,10 @@ def main(dim_y = (112,112),
     checkpoint = tf.train.Checkpoint(optimizer=model.opt, model=model)
     for epoch in range(model.epoch, config.num_epochs+1):
         #################### TRANING ##################################################
-        #beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
-        #model.w_kl = model.config.kl_latent_loss_weight * beta
-        #model.w_kf = model.config.kf_loss_weight * beta
-        train_log = tqdm.tqdm(total=len_train//config.batch_size, desc='Train {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
+        beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
+        model.w_kl = model.config.kl_latent_loss_weight * beta
+        model.w_kf = model.config.kf_loss_weight * beta
+        train_log = tqdm(total=len_train//config.batch_size, desc='Train {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
         for i, inputs in enumerate(train_dataset):
             loss, metrices = model.train_step(inputs)
             loss_sum_train_metric(loss)
@@ -134,7 +134,7 @@ def main(dim_y = (112,112),
         loss_sum_train_metric.reset_states()
 
         #################### TESTING ##################################################
-        test_log = tqdm.tqdm(total=len_test//config.batch_size, desc='Test {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
+        test_log = tqdm(total=len_test//config.batch_size, desc='Test {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
         for i, inputs in enumerate(test_dataset):
             loss, metrices = model.test_step(inputs)
             test_log.set_postfix(metrices)

@@ -1,6 +1,7 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 import tensorflow_addons as tfa
+from tqdm import tqdm
 
 from .layers import Encoder, Decoder
 from .kalman_filter import KalmanFilter as Linear_KF
@@ -36,8 +37,13 @@ class VAE(tfk.Model):
         self.debug = debug
         self.encoder = Encoder(self.config)
         self.decoder = Decoder(self.config, output_channels = output_channels, unet=unet_decoder)
-        self.prior = tfd.Normal(loc=tf.zeros(config.dim_x, dtype='float32'),
-                                scale = tf.ones(config.dim_x, dtype='float32'))
+        #self.prior = tfd.Normal(loc=tf.zeros(config.dim_x, dtype='float32'),
+        #                        scale = tf.ones(config.dim_x, dtype='float32'))
+        self.prior = tfd.Independent(
+            tfd.Normal(
+                loc=tf.zeros(config.dim_x, dtype='float32'),
+                scale=tf.ones(config.dim_x, dtype='float32')),
+                        reinterpreted_batch_ndims=1)
 
         self.log_py_x_metric = tfk.metrics.Mean(name = 'log p(y|x) ↑')
         self.log_px_metric = tfk.metrics.Mean(name = 'log p(x) ↑')
@@ -52,10 +58,9 @@ class VAE(tfk.Model):
         self.w_kl = self.config.kl_latent_loss_weight
     
     def get_loss(self, py_x, y, qx_y, px, x, mask):
-        logpx = tf.reduce_sum(tf.multiply(tf.reduce_sum(px.log_prob(x), axis=[2]), mask), axis=-1)
-        logqx_y = tf.reduce_sum(tf.multiply(tf.reduce_sum(qx_y.log_prob(x), axis=[2]), mask), axis=-1)
-        #logpy_x = tf.reduce_sum(tf.multiply(tf.reduce_sum(py_x.log_prob(y), axis=[2,3]), mask), axis=-1)
-        logpy_x = -tf.reduce_sum(tf.multiply(tf.reduce_sum((py_x.mean() - y)**2, axis=[2,3]), mask), axis=-1)
+        logpx = tf.reduce_sum(tf.multiply(px.log_prob(x), mask), axis=-1)
+        logqx_y = tf.reduce_sum(tf.multiply(qx_y.log_prob(x), mask), axis=-1)
+        logpy_x = tf.reduce_sum(tf.multiply(py_x.log_prob(y), mask), axis=-1)
                 
         self.log_py_x_metric.update_state(logpy_x)
         self.log_px_metric.update_state(logpx)
@@ -64,8 +69,12 @@ class VAE(tfk.Model):
         y_pred = py_x.sample()
         if self.debug:
             tf.debugging.assert_equal(y_pred.shape, y.shape)
-        ssim = tf.image.ssim(y_pred, y, max_val=1.0, filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
-        self.ssim_metric.update_state(ssim)
+        
+        pred_imgs = tf.reshape(y_pred, (-1, y_pred.shape[2], y_pred.shape[3], 1))
+        true_imgs = tf.reshape(y, (-1, y.shape[2], y.shape[3], 1))
+        ssim = tf.image.ssim(pred_imgs, true_imgs, max_val=tf.reduce_max(true_imgs), filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
+        ssim = tf.reshape(ssim, (-1, y.shape[1]))
+        self.ssim_metric.update_state(tf.reduce_mean(ssim, axis=-1))
         
         return logpy_x, logpx, logqx_y
        
@@ -170,16 +179,28 @@ class VAE(tfk.Model):
         return tf.keras.Model(inputs=[inputs], outputs=self.call(inputs))
     
     def info(self):
-        x = tf.keras.layers.Input(shape=(self.config.ph_steps, *self.config.dim_y))        
-        vae = tf.keras.Model(inputs=[x], outputs=self.call(x))
-        vae.summary()
-        
-        encoder = tf.keras.Model(inputs=[x], outputs=self.encoder.call(x))
+        y = tf.keras.layers.Input(shape=(self.config.ph_steps, *self.config.dim_y), batch_size=1)
+        mask = tf.keras.layers.Input(shape=(self.config.ph_steps), batch_size=1)
+        inputs = [y,mask]
+        self._print_info(inputs)
+    
+    def _print_info(self, inputs):    
+        y = inputs[0]
+        mask = inputs[1]    
+        encoder = tf.keras.Model(inputs=y, outputs=self.encoder.call(y), name='Encoder')
         encoder.summary()
         
         x_decoder = tf.keras.layers.Input(shape=(self.config.ph_steps, self.config.dim_x))
-        decoder = tf.keras.Model(inputs=[x_decoder], outputs=self.decoder.call(x_decoder))
+        decoder = tf.keras.Model(inputs=[x_decoder], outputs=self.decoder.call(x_decoder), name='Decoder')
         decoder.summary()
+        bs = 2
+        if len(inputs) > 2:            
+            _ = self([np.zeros((bs,self.config.ph_steps,*self.config.dim_y), dtype='float32'), 
+                      np.zeros((bs,self.config.ph_steps), dtype='bool'),
+                      np.zeros((bs,*self.config.dim_y), dtype='float32')])
+        else:
+            _ = self([np.zeros((bs,self.config.ph_steps,*self.config.dim_y), dtype='float32'), np.zeros((bs,self.config.ph_steps), dtype='bool')])
+        self.summary()
 
 class KVAE(VAE):
     def __init__(self, config, name="kvae", elbo_name='elbo = log p(y|x) - log q(x|y) + log p(x,z) - log p(z|x)', **kwargs):
@@ -303,7 +324,17 @@ class KVAE(VAE):
                 "pred_mean": pred_dist.mean(), 
                 "pred_cov": pred_dist.covariance(),
                 "x": x}
-    
+
+    def _print_info(self, inputs):    
+        from tabulate import tabulate
+        _ = self.kf([np.zeros((1,self.config.ph_steps,self.config.dim_x), dtype='float32'), np.zeros((1,self.config.ph_steps), dtype='bool')])
+        info = []
+        [info.append([t.name, t.shape, t.trainable]) for t in self.kf.trainable_variables]
+        tqdm.write("Model: {0}".format(self.kf.name))
+        tqdm.write(tabulate(info, headers=['Name', 'Shape', 'Trainable']))
+
+        super(KVAE, self)._print_info(inputs)
+
     def sample(self, samples):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)
         y_hat_sample, _,_ = self.decoder(x_samples)

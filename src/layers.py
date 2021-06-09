@@ -1,10 +1,10 @@
 import tensorflow as tf
-import tensorflow.keras.backend as K
 import tensorflow_probability as tfp
-import numpy as np
 
+import numpy as np
 tfkl = tf.keras.layers
 tfk = tf.keras
+tfpl = tfp.layers
 
 class Cnn_block(tfkl.Layer):
     def __init__(self, 
@@ -85,8 +85,8 @@ class Fc_block(tfkl.Layer):
         x = self.dense(x)
         x = self.reshape(x)
         return x
-    
-class Encoder(tfkl.Layer):
+
+class Encoder(tfk.Model):
     def __init__(self, config, unet=False, name="Encoder", **kwargs):
         super(Encoder, self).__init__(name=name, **kwargs)
         self.dim_x = config.dim_x
@@ -100,11 +100,14 @@ class Encoder(tfkl.Layer):
             self.cnn_blocks.append(Cnn_block(filters = self.filters[i], 
                                              kernel = config.filter_size,
                                              strides = (2,2),
-                                             name="Cnn_block{0}".format(i)))
+                                             name="{0}_Cnn_block{1}".format(self.name, i)))
         
-        self.flatten = tfkl.Flatten(name='Flatten')
-        self.mu_layer = tfkl.Dense(self.dim_x, name='Dense_mu')
-        self.sigma_layer = tfkl.Dense(self.dim_x, activation='softplus', name='Dense_sigma')
+        self.flatten = tfkl.Flatten(name='{0}_Flatten'.format(self.name))
+
+        encoder_dist = tfpl.IndependentNormal
+        self.mu_layer = tfkl.Dense(self.dim_x, name='{0}_Dense_mu'.format(self.name))
+        self.sigma_layer = tfkl.Dense(encoder_dist.params_size(self.dim_x) - self.dim_x, activation='softplus', name='{0}_Dense_sigma'.format(self.name))
+        self.dist = encoder_dist(self.dim_x)
     
     def call(self, y):
         ph_steps = tf.shape(y)[1]
@@ -118,18 +121,19 @@ class Encoder(tfkl.Layer):
                 outs.append(x)
         
         x = self.flatten(x)
-        
+
         mu = tf.reshape(self.mu_layer(x), (-1, ph_steps, self.dim_x))
         # if variance is zero, log_p(x) will be NaN and gradients will be NaN, therefore adding epsilson + softmax
         sigma = tf.reshape(self.sigma_layer(x), (-1, ph_steps, self.dim_x)) + tf.keras.backend.epsilon()
         
-        q_x_y = tfp.distributions.Normal(mu, sigma)
+        event = tf.concat([mu, sigma], axis=-1)
+        q_x_y = self.dist(event)
 
         if self.unet:
             return q_x_y, outs
         return q_x_y
     
-class Decoder(tfkl.Layer):
+class Decoder(tfk.Model):
     def __init__(self, config, output_channels, unet=False, name='Decoder', **kwargs):
         super(Decoder, self).__init__(name=name, **kwargs)
         self.output_channels = output_channels
@@ -142,14 +146,14 @@ class Decoder(tfkl.Layer):
         
         h = int(config.dim_y[0] / (2**(len(self.filters))))
         w = int(config.dim_y[1] / (2**(len(self.filters))))
-        self.fc_block = Fc_block(h,w,self.filters[-1], name='FC_block')
+        self.fc_block = Fc_block(h,w,self.filters[-1], name='{0}_FC_block'.format(self.name))
         self.cnnT_blocks = []
         for i in reversed(range(len(self.filters))):
             self.cnnT_blocks.append(CnnT_block(filters = self.filters[i]*2 if self.unet else self.filters[i]*4, 
                                                factor = 2,
                                                kernel = config.filter_size,
                                                strides = (1,1),
-                                               name="CnnT_block{0}".format(i)))
+                                               name="{0}_CnnT_block{1}".format(self.name, i)))
         self.cnnT_block_last = tfkl.Conv2D(filters=self.output_channels,
                                                     kernel_size=1,
                                                     strides=1,
@@ -158,9 +162,15 @@ class Decoder(tfkl.Layer):
                                                     kernel_initializer='glorot_normal',
                                                     bias_initializer='zeros',
                                                     activation=None,
-                                                    name='Y_last'
+                                                    name='{0}_Y_last'.format(self.name)
                                                    )
         self.mu_activation = tfkl.Activation(activation_y_mu)
+        self.flatten = tfkl.Flatten(name='{0}_Flatten'.format(self.name))
+        decoder_dist = tfpl.IndependentNormal
+        if self.output_channels > 1:
+            self.dist = decoder_dist((*self.dim_y,self.output_channels))
+        else:
+            self.dist = decoder_dist(self.dim_y)
         
     def call(self, inputs):
         if self.unet:
@@ -188,9 +198,12 @@ class Decoder(tfkl.Layer):
         
         y_mu = tf.reshape(y_mu, (bs, ph_steps, *self.dim_y, -1)) # (b*s,dim_y, dim_y, c) -> (b,s,dim_y, dim_y, c)
         y_sigma = tf.reshape(y_sigma, (bs, ph_steps, *self.dim_y,-1))  + tf.keras.backend.epsilon()
-        if self.output_channels == 1:
-            y_mu = y_mu[...,0] # (b*s,dim_y, dim_y, 1) -> (b,s,dim_y, dim_y)
-            y_sigma = y_sigma[...,0]
+        #if self.output_channels == 1:
+        #    y_mu = y_mu[...,0] # (b*s,dim_y, dim_y, 1) -> (b,s,dim_y, dim_y)
+        #    y_sigma = y_sigma[...,0]
 
-        p_y_x = tfp.distributions.Normal(y_mu, y_sigma)
+        y_mu = tf.reshape(y_mu, (-1, ph_steps, np.prod(self.dim_y)*self.output_channels))
+        y_sigma = tf.reshape(y_sigma, (-1, ph_steps, np.prod(self.dim_y)*self.output_channels))
+
+        p_y_x = self.dist(tf.concat([y_mu, y_sigma], axis=-1))
         return p_y_x

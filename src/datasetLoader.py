@@ -4,6 +4,7 @@ import cv2
 import pathlib
 import os
 import pandas as pd
+from tqdm import tqdm
 
 def loadvideo(filename: str):
     """Loads a video from a file.
@@ -128,7 +129,7 @@ class TensorflowDatasetLoader():
             if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
                 if fileName in short:
                     continue
-                if size is not None and len(self.idxs) > size:
+                if size is not None and len(self.idxs) >= size:
                     break
                 self.idxs.append(fileName)
 
@@ -215,7 +216,7 @@ class TensorflowDatasetLoader():
             for idx in self.idxs:
                 video, mask, _ = self._read_video(idx)
                 if np.any(mask == True):
-                    print(idx)           
+                    tqdm.write(idx)           
                 yield tuple([video, mask])
         return gen
 
@@ -224,7 +225,7 @@ class TensorflowDatasetLoader():
             for idx in self.idxs:
                 video, mask, first_frame = self._read_video(idx)
                 if np.any(mask == True):
-                    print(idx)           
+                    tqdm.write(idx)           
                 yield tuple([video, mask, first_frame])
         return gen
 
@@ -284,7 +285,7 @@ class EvalTensorflowDatasetLoader():
             if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
                 if fileName in short:
                     continue
-                if size is not None and len(self.idxs) > size:
+                if size is not None and len(self.idxs) >= size:
                     break
                 self.idxs.append(fileName)
 

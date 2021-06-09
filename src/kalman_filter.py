@@ -1,10 +1,13 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 import numpy as np
+from tqdm import tqdm
+import inspect
 
+tfk = tf.keras
 
 # tfp.distributions.LinearGaussianStateSpaceModel.posterior_marginals can return non positive covariance matrix (round error?) 
-def get_cholesky(A):
+def get_cholesky(A, name):
     """Find the nearest positive-definite matrix to input
 
     A Python/Numpy port of John D'Errico's `nearestSPD` MATLAB code [1], which
@@ -31,7 +34,7 @@ def get_cholesky(A):
     
     is_pd, A_cholesky = isPD(A3)
     if is_pd:
-        print("test")
+        tqdm.write("0 {0}".format(name))
         return A_cholesky
 
     #spacing = tf.spacing(tf.norm(A))
@@ -45,10 +48,10 @@ def get_cholesky(A):
     # `spacing` will, for Gaussian random matrixes of small dimension, be on
     # othe order of 1e-16. In practice, both ways converge, as the unit test
     # below suggests.
-    I = np.eye(A.shape[-1])
+    I = tf.eye(A.shape[-1])
     k = 1
     while True:
-        print(k)
+        tqdm.write("{0} {1}".format(k, name))
         #mineig = np.min(np.real(la.eigvals(A3)))
         is_pd, A_cholesky = isPD(A3)
         if is_pd:
@@ -69,15 +72,15 @@ def isPD(B):
     except:
         return False, None
 
-class KalmanFilter(tf.keras.layers.Layer):
+class KalmanFilter(tfk.Model):
     def __init__(self, config, name='kalman_filter', **kwargs):
         super(KalmanFilter, self).__init__(name=name, **kwargs)
         self.dim_z = config.dim_z
         self.dim_x = config.dim_x
         
         ## Parameters
-        A_init = tf.eye(config.dim_z)
-        self.A = tf.Variable(initial_value=A_init, 
+        A_init = tf.random_normal_initializer()
+        self.A = tf.Variable(initial_value=A_init(shape=(config.dim_z,config.dim_z)),
                              trainable=config.trainable_A, 
                              dtype="float32", 
                              name="A")
@@ -149,7 +152,7 @@ class KalmanFilter(tf.keras.layers.Layer):
         mask = inputs[1]
         
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
-        p_zt_xT = tfp.distributions.MultivariateNormalTriL(mu_smooth, get_cholesky(Sigma_smooth))
+        p_zt_xT = tfp.distributions.MultivariateNormalTriL(mu_smooth, get_cholesky(Sigma_smooth, inspect.stack()[0][3]))
         return p_zt_xT
     
     def get_loss(self, x, p_zt_xT):
@@ -208,17 +211,20 @@ class KalmanFilter(tf.keras.layers.Layer):
     def get_smooth_dist(self, x, mask):
         mu_smooth, Sigma_smooth = self.kalman_filter.posterior_marginals(x, mask = mask)
         x_mu_smooth, x_cov_smooth = self.kalman_filter.latents_to_observations(mu_smooth, Sigma_smooth)
-        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, scale_tril=get_cholesky(x_cov_smooth))
+        smooth_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_smooth, 
+                                                               scale_tril=get_cholesky(x_cov_smooth, inspect.stack()[0][3]))
         return smooth_dist
 
     def get_filter_dist(self, x, mask, get_pred=False):
         kalman_data = self.kalman_filter.forward_filter(x, mask=mask)
         _, mu_filt, Sigma_filt, mu_pred, Sigma_pred, x_mu_filt, x_covs_filt = kalman_data
-        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt, scale_tril=get_cholesky(x_covs_filt))
+        filt_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt,
+                                                             scale_tril=get_cholesky(x_covs_filt, inspect.stack()[0][3]))
 
         if get_pred:
             x_mu_filt_pred, x_covs_filt_pred = self.kalman_filter.latents_to_observations(mu_pred, Sigma_pred)
-            filt_pred_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt_pred, scale_tril=get_cholesky(x_covs_filt_pred))
+            filt_pred_dist = tfp.distributions.MultivariateNormalTriL(loc=x_mu_filt_pred, 
+                                                                      scale_tril=get_cholesky(x_covs_filt_pred, inspect.stack()[0][3]))
             return filt_dist, filt_pred_dist
 
         return filt_dist

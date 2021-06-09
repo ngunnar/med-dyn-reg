@@ -113,7 +113,7 @@ def plot_to_image(y, data_arg):
     s = 0
     l_org = y.shape[1] // step
     l = l_org
-    figure, axs = plt.subplots(len(data_arg)+1,l, sharex=True, sharey=True, figsize=(6.4*l, (len(data_arg)+1)*4.8))
+    figure, axs = plt.subplots(len(data_arg)+1,l, sharex=True, sharey=True, figsize=(3.2*l, (len(data_arg)+1)*2.4))
     axs = axs.flatten()
     [ax.axes.xaxis.set_ticks([]) for ax in axs]
     [ax.axes.yaxis.set_ticks([]) for ax in axs]
