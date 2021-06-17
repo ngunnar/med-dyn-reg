@@ -1,5 +1,5 @@
 from collections import namedtuple
-
+import numpy as np
 def get_config(
     #DS
     dim_y = (112,112),
@@ -10,7 +10,9 @@ def get_config(
     #VAE
     activation = 'relu',
     filter_size = 3,
-    filters = [64, 128, 256, 512],
+    enc_filters = [64, 128, 256, 512],
+    dec_filters = [64, 128, 256, 512],
+    use_subpixel = [True, True, True, True], # True - more parameters in decoder, especially in layers with many filters
     # LGSSM
     dim_x = 16,
     dim_z = 32,
@@ -45,6 +47,7 @@ def get_config(
     # Plotting
     plot_epoch = 1,
 ):
+    
     config_dict = {
         # DS
         "dim_y":dim_y,
@@ -55,7 +58,9 @@ def get_config(
         #VAE
         'activation': activation,
         'filter_size': filter_size,
-        'filters':filters,
+        'enc_filters':enc_filters,
+        'dec_filters':dec_filters,
+        'use_subpixel':use_subpixel,
         # LGSSM
         "dim_x": dim_x,
         "dim_z": dim_z,

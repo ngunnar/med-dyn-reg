@@ -13,6 +13,15 @@ def get_config(path):
     print(os.path.dirname(path))
     with open('%s/%s' % (os.path.dirname(path), 'config.json')) as data_file:
         config_dict = json.load(data_file)
+    
+    print('use_subpixel' in config_dict)
+    if 'use_subpixel' not in config_dict:
+        config_dict['use_subpixel'] = [True, True, True, True]
+    if 'filters' in config_dict:
+        config_dict['enc_filters'] = config_dict['filters'] 
+        config_dict['dec_filters'] = config_dict['filters']
+    
+    print(config_dict['use_subpixel'], config_dict['enc_filters'], config_dict['dec_filters'])
     config = namedtuple("Config", config_dict.keys())(*config_dict.values())
     return config, config_dict
 
@@ -102,7 +111,7 @@ def get_x(y_true, masks, model):
         data.append([x_mu_smooth, std_smooth, x_mu_filt, std_filt, x_mu_filt_pred, std_filt_pred])
     return x_vae, data        
         
-def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, latex=True):
+def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, latex=True, plots = ['smooth', 'filt', 'pred']):
     length = y_true.shape[1]
     mask_none = np.zeros(shape=length).astype('bool')
     mask_impute = np.ones(shape=length).astype('bool')
@@ -155,18 +164,73 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, l
     std_p_pred = std_filt_pred_predict[0,:,d]
 
     t = np.arange(length)
-    fig, axs = plt.subplots(3,3, sharey=True, sharex=True, figsize=(10,5))
+    fig, axs = plt.subplots(len(plots), 3, sharey=True, sharex=True, figsize=(10,5))#, squeeze=True)
+    
+    if len(axs.shape) == 1:
+        axs = axs[None,...]
+    
+    print(type(axs), axs.shape)
+    
     for ax in axs:
         for a in ax:
             a.set_ylim(y_range[0],y_range[1])
             a.set_rasterization_zorder(1)
+    
     handles = {}
-
-    l1, = axs[0,0].plot(t, mu_s_none, 'r', label=l1_label)
-    l2, = axs[1,0].plot(t, mu_f_none, 'g', label=l2_label)
-    l3, = axs[2,0].plot(t, mu_p_none, 'y', label=l3_label)
+    
+    current = 0
+    if 'smooth' in plots:
+        l1, = axs[current, 0].plot(t, mu_s_none, 'r', label=l1_label)
+        axs[current,0].set_title(r"$t = [1, \dots, T]$", fontdict={'fontsize': 20, 'fontweight': 'medium'})
+        axs[current, 0].fill_between(t, mu_s_none-std_s_none, mu_s_none+std_s_none, zorder=0, alpha=0.2, color='r')
+        # Impute
+        axs[current,1].set_title(r"$t = [1, {0}, {1}, \dots]$".format(1+steps, 1+2*steps), fontdict={'fontsize': 20, 'fontweight': 'medium'})
+        axs[current,1].plot(t, mu_s_impute, 'r')
+        axs[current,1].fill_between(t, mu_s_impute-std_s_impute, mu_s_impute+std_s_impute, zorder=0, alpha=0.2, color='r')
+        axs[current,1].plot(t, x_vae[0,:,d], 'b--')
+        
+        axs[current,2].set_title(r"$t = [1, \dots, T-{0}]$".format(last), fontdict={'fontsize': 20, 'fontweight': 'medium'})
+        axs[current,2].plot(t, mu_s_pred, 'r')
+        axs[current,2].fill_between(t, mu_s_pred-std_s_pred, mu_s_pred+std_s_pred, zorder=0, alpha=0.2, color='r')
+        axs[current,2].plot(t, x_vae[0,:,d], 'b--')
+        if 'Smooth' not in handles:
+            handles['Smooth'] = l1
+        current += 1
+    
+    if 'filt' in plots:
+        l2, = axs[current,0].plot(t, mu_f_none, 'g', label=l2_label)
+        axs[current,0].fill_between(t, mu_f_none-std_f_none, mu_f_none+std_f_none, zorder=0, alpha=0.2, color='g')
+        axs[current,0].plot(t, x_vae[0,:,d], 'b--')
+        
+        axs[current,1].plot(t, mu_f_impute, 'g')
+        axs[current,1].fill_between(t, mu_f_impute-std_f_impute, mu_f_impute+std_f_impute, zorder=0, alpha=0.2, color='g')
+        axs[current,1].plot(t, x_vae[0,:,d], 'b--')
+                
+        axs[current,2].plot(t, mu_f_pred, 'g')
+        axs[current,2].fill_between(t, mu_f_pred-std_f_pred, mu_f_pred+std_f_pred, zorder=0, alpha=0.2, color='g')
+        axs[current,2].plot(t, x_vae[0,:,d], 'b--')
+        if 'Filt' not in handles:
+            handles['Filt'] = l2
+        current += 1
+    if 'pred' in plots:
+        l3, = axs[current,0].plot(t, mu_p_none, 'y', label=l3_label)
+        axs[current,0].fill_between(t, mu_p_none-std_p_none, mu_p_none+std_p_none, zorder=0, alpha=0.2, color='y')
+        axs[current,0].plot(t, x_vae[0,:,d], 'b--')
+        
+        axs[current,1].plot(t, mu_p_impute, 'y')
+        axs[current,1].fill_between(t, mu_p_impute-std_p_impute, mu_p_impute+std_p_impute, zorder=0, alpha=0.2, color='y')
+        axs[current,1].plot(t, x_vae[0,:,d], 'b--')
+        
+        axs[current,2].plot(t, mu_p_pred, 'y')
+        axs[current,2].fill_between(t, mu_p_pred-std_p_pred, mu_p_pred+std_p_pred, zorder=0, alpha=0.2, color='y')
+        axs[current,2].plot(t, x_vae[0,:,d], 'b--')
+        if 'Pred' not in handles:
+            handles['Pred'] = l3
+    
     l4, = axs[0,0].plot(t, x_vae[0,:,d], 'b--', label=l4_label)
-
+    if 'Obs' not in handles:
+        handles['Obs'] = l4
+    '''
     # None
     axs[0,0].set_title(r"$t = [1, \dots, T]$", fontdict={'fontsize': 20, 'fontweight': 'medium'})
     axs[0,0].fill_between(t, mu_s_none-std_s_none, mu_s_none+std_s_none, zorder=0, alpha=0.2, color='r')
@@ -202,7 +266,7 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, l
     axs[2,2].plot(t, mu_p_pred, 'y')
     axs[2,2].fill_between(t, mu_p_pred-std_p_pred, mu_p_pred+std_p_pred, zorder=0, alpha=0.2, color='y')
     axs[2,2].plot(t, x_vae[0,:,d], 'b--')
-
+    
     if 'Smooth' not in handles:
          handles['Smooth'] = l1
     if 'Filt' not in handles:
@@ -211,9 +275,9 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, l
         handles['Pred'] = l3
     if 'Obs' not in handles:
         handles['Obs'] = l4
-
+    '''
     plt.tight_layout()
-    lgd = plt.legend(handles=handles.values(), loc='lower center', ncol=4, bbox_to_anchor=[-0.7, -1.5])
+    lgd = plt.legend(handles=handles.values(), loc='lower center', ncol=4, bbox_to_anchor=[-0.7, -0.5*len(plots)])
     if save_dir is not None:
         plt.savefig(save_dir, bbox_extra_artists=[lgd], bbox_inches='tight')
     else:
@@ -232,16 +296,18 @@ def create_animation(y_true, steps, last, model, y_0 = None, save_dir = None):
     result = model.predict(data)
     y_smooth_val = next(item for item in result if item["name"] == "smooth")['data']
     y_vae_val = next(item for item in result if item["name"] == "vae")['data']
-    y_filt_val = next(item for item in result if item["name"] == "filt")['data']
+    y_filt_val = next(item for item in result if item["name"] == "pred")['data']
     
-    fig, axs = plt.subplots(1,4,figsize=(10,5))
+    fig, axs = plt.subplots(1,4,figsize= [8.0*4, 6.0*1])
     axs = axs.flatten()
 
     [ax.axis('off') for ax in axs]
 
     axs[1].set_title("Smooth")
-    axs[2].set_title("Filter")
+    axs[2].set_title("Pred")
     axs[3].set_title("True data")
+    
+    fig.suptitle(r"$t = [1, {0}, {1}, \dots]$".format(1+steps, 1+2*steps))
     
     def plot(ax, d, mask,i):
         if mask == True:

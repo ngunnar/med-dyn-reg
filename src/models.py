@@ -79,10 +79,10 @@ class VAE(tfk.Model):
         return logpy_x, logpx, logqx_y
        
 
-    def call(self, inputs):
+    def call(self, inputs, traning):
         y = inputs[0]
         mask = inputs[1]
-        p_y_x, q_x_y, x = self.forward(y, mask)
+        p_y_x, q_x_y, x = self.forward(y, mask, traning)
         
         logpy_x, logpx, logqx_y = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'))
         elbo = logpy_x + logpx - logqx_y
@@ -98,10 +98,10 @@ class VAE(tfk.Model):
         
         return p_y_x, metrices
     
-    def forward(self, y, mask):
-        q_x_y = self.encoder(y)
+    def forward(self, y, mask, traning):
+        q_x_y = self.encoder(y, traning)
         x = q_x_y.sample()
-        p_y_x = self.decoder(x)
+        p_y_x = self.decoder(x, traning)
         if self.debug:
             tf.debugging.assert_equal(p_y_x.batch_shape, y.shape, "{0} vs {1}".format(p_y_x.batch_shape, y.shape))
             tf.debugging.assert_equal(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x)))
@@ -112,7 +112,7 @@ class VAE(tfk.Model):
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
-        p_y_x, q_x_y, x = self.forward(y_true, mask)
+        p_y_x, q_x_y, x = self.forward(y_true, mask, False)
         y_hat = p_y_x.sample()
         if self.debug:
             tf.debugging.assert_equal(y_true.shape, y_hat.shape, "{0} vs {1}".format(y_true.shape, y_hat.shape))
@@ -121,7 +121,7 @@ class VAE(tfk.Model):
     @tf.function
     def get_latents(self, inputs):
         y_true = inputs[0]        
-        q_x_y = self.encoder(y_true)
+        q_x_y = self.encoder(y_true, False)
         x = q_x_y.sample()
         return {"x":x}
 
@@ -150,7 +150,7 @@ class VAE(tfk.Model):
     
     def train_step(self, inputs):
         with tf.GradientTape() as tape:
-            _, metrices = self(inputs)
+            _, metrices = self(inputs, training=True)
             loss = tf.reduce_mean(sum(self.losses))
             variables = self.trainable_variables
             if hasattr(self.config, 'only_vae_epochs'):
@@ -187,19 +187,20 @@ class VAE(tfk.Model):
     def _print_info(self, inputs):    
         y = inputs[0]
         mask = inputs[1]    
-        encoder = tf.keras.Model(inputs=y, outputs=self.encoder.call(y), name='Encoder')
+        encoder = tf.keras.Model(inputs=y, outputs=self.encoder.call(y, False), name='Encoder')
         encoder.summary()
         
         x_decoder = tf.keras.layers.Input(shape=(self.config.ph_steps, self.config.dim_x))
-        decoder = tf.keras.Model(inputs=[x_decoder], outputs=self.decoder.call(x_decoder), name='Decoder')
+        decoder = tf.keras.Model(inputs=[x_decoder], outputs=self.decoder.call(x_decoder, False), name='Decoder')
         decoder.summary()
+        
         bs = 2
         if len(inputs) > 2:            
             _ = self([np.zeros((bs,self.config.ph_steps,*self.config.dim_y), dtype='float32'), 
                       np.zeros((bs,self.config.ph_steps), dtype='bool'),
-                      np.zeros((bs,*self.config.dim_y), dtype='float32')])
+                      np.zeros((bs,*self.config.dim_y), dtype='float32')], training=False)
         else:
-            _ = self([np.zeros((bs,self.config.ph_steps,*self.config.dim_y), dtype='float32'), np.zeros((bs,self.config.ph_steps), dtype='bool')])
+            _ = self([np.zeros((bs,self.config.ph_steps,*self.config.dim_y), dtype='float32'), np.zeros((bs,self.config.ph_steps), dtype='bool')], training=False)
         self.summary()
 
 class KVAE(VAE):
@@ -230,10 +231,10 @@ class KVAE(VAE):
 
         return logpy_x, logpx, logqx_y, log_pxz, log_pz_x
     
-    def call(self, inputs):
+    def call(self, inputs, training):
         y_true = inputs[0]
         mask = inputs[1]
-        p_y_x, q_x_y, x, x_smooth, p_zt_xT = self.forward(y_true, mask)
+        p_y_x, q_x_y, x, x_smooth, p_zt_xT = self.forward(y_true, mask, training)
         logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, p_zt_xT)
         
         elbo = logpy_x - logqx_y + log_pxz - log_pz_x
@@ -251,8 +252,8 @@ class KVAE(VAE):
 
         return p_y_x, metrices
     
-    def forward(self, y_true, mask):
-        q_x_y = self.encoder(y_true)
+    def forward(self, y_true, mask, training):
+        q_x_y = self.encoder(y_true, training)
 
         x = q_x_y.sample()
         x_kf = x
@@ -279,14 +280,14 @@ class KVAE(VAE):
 
             x_smooth = tf.stack(x_smooth, 1)
             '''
-        p_y_x = self.decoder(x)
+        p_y_x = self.decoder(x, training)
         return p_y_x, q_x_y, x, x_smooth, p_zt_xT
 
     @tf.function
     def predict(self, inputs):
         y_true = inputs[0]
         mask = inputs[1]
-        q_x_y = self.encoder(y_true) 
+        q_x_y = self.encoder(y_true, False) 
         x = q_x_y.sample()
         
         #Smooth
@@ -295,9 +296,9 @@ class KVAE(VAE):
         # Filter        
         filt_dist = self.kf.get_filter_dist(x, mask)       
          
-        y_hat_filt = self.decoder(filt_dist.sample()).sample()
-        y_hat_smooth = self.decoder(smooth_dist.sample()).sample()
-        y_hat_vae = self.decoder(x).sample()
+        y_hat_filt = self.decoder(filt_dist.sample(), False).sample()
+        y_hat_smooth = self.decoder(smooth_dist.sample(), False).sample()
+        y_hat_vae = self.decoder(x, False).sample()
         
         return [{'name':'filt', 'data': y_hat_filt},
                {'name':'smooth', 'data': y_hat_smooth},
@@ -308,7 +309,7 @@ class KVAE(VAE):
         y_true = inputs[0]
         mask = inputs[1]
         
-        q_x_y = self.encoder(y_true)
+        q_x_y = self.encoder(y_true, False)
         x = q_x_y.sample()
         
         #Smooth
@@ -337,7 +338,7 @@ class KVAE(VAE):
 
     def sample(self, samples):
         x_samples = self.kf.kalman_filter.sample(sample_shape=samples)
-        y_hat_sample, _,_ = self.decoder(x_samples)
+        y_hat_sample, _,_ = self.decoder(x_samples, False)
         return y_hat_sample
 
                                   

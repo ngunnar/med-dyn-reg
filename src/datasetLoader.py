@@ -96,10 +96,10 @@ class KvaeDataLoader():
 class TensorflowDatasetLoader():
     def __init__(self, 
                  root=None, 
-                 image_shape = (64,64), 
+                 image_shape = (112,112), 
                  split = 'train', 
-                 length = 20, 
-                 period=2,
+                 length = 50, 
+                 period=1,
                  max_length=250, 
                  clips=1,
                  pad=None,
@@ -144,6 +144,8 @@ class TensorflowDatasetLoader():
                 tuple([tf.float32, tf.bool]),
                 tuple([(self.length, *self.image_shape),(self.length)]))
         self.data = data
+        self.resizing = tf.keras.layers.experimental.preprocessing.Resizing(self.image_shape[0], self.image_shape[1], interpolation='bilinear')
+        self.rescale = tf.keras.layers.experimental.preprocessing.Rescaling(1 / 255., offset=0.0)
     
     def _read_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
@@ -196,19 +198,15 @@ class TensorflowDatasetLoader():
             temp[:, self.pad:-self.pad, self.pad:-self.pad] = video  # pylint: disable=E1130
             i, j = np.random.randint(0, 2 * self.pad, 2)
             video = temp[:, :, i:(i + h), j:(j + w)]
-
-        if self.image_shape is not None and self.image_shape != video[0].shape:
-            video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
-            first_frame = cv2.resize(first_frame, dsize=self.image_shape,interpolation=cv2.INTER_CUBIC)
         
-        #mu = video.mean(axis=0)
-        #std = video.std(axis=0) + 1e-10
-        #video = scale(video, mu, std)
-        #first_frame = scale(first_frame, mu, std)
-        #video = normalize_negative_one(video, axis=(1,2))
-        #first_frame = normalize_negative_one(first_frame, axis=(0,1))
-        video /= 255.
-        first_frame /= 255.
+        video = video[...,None] #(ph_steps, h, w 1)
+        first_frame = first_frame[None,...,None] #(1, h, w, 1)
+        if self.image_shape is not None and self.image_shape != video[0].shape:
+            video = self.resizing(video)
+            first_frame = self.resizing(first_frame)
+            
+        video = self.rescale(video)[...,0] # (ph_steps, h, w)
+        first_frame = self.rescale(first_frame)[0,:,:,0] # (h, w)
         return video, mask, first_frame
 
     def generator(self):
@@ -308,6 +306,9 @@ class EvalTensorflowDatasetLoader():
         for filename in self.frames:
             for frame in self.frames[filename]:
                 self.trace[filename][frame] = np.array(self.trace[filename][frame])
+         
+        self.resizing = tf.keras.layers.experimental.preprocessing.Resizing(self.image_shape[0], self.image_shape[1], interpolation='bilinear')
+        self.rescale = tf.keras.layers.experimental.preprocessing.Rescaling(1 / 255., offset=0.0)
         
     def _read_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
@@ -340,17 +341,21 @@ class EvalTensorflowDatasetLoader():
             temp[:, self.pad:-self.pad, self.pad:-self.pad] = video  # pylint: disable=E1130
             i, j = np.random.randint(0, 2 * self.pad, 2)
             video = temp[:, :, i:(i + h), j:(j + w)]
-
-        if self.image_shape is not None:
-            video = np.asarray([cv2.resize(video[i,...], dsize=self.image_shape,interpolation=cv2.INTER_CUBIC) for i in range(video.shape[0])])
-            first_frame = cv2.resize(first_frame, dsize=self.image_shape,interpolation=cv2.INTER_CUBIC)
-            trace1 = img_as_bool(resize(trace1, self.image_shape)).astype('float32')
-            trace2 = img_as_bool(resize(trace2, self.image_shape)).astype('float32')
-
-        #video = normalize_negative_one(video, axis=(1,2))
-        #first_frame = normalize_negative_one(first_frame, axis=(0,1))
-        video /= 255.
-        first_frame /= 255.
+        
+        video = video[...,None] #(ph_steps, h, w 1)
+        first_frame = first_frame[None,...,None] #(1, h, w, 1)
+        trace1 = trace1[None,...,None] #(1, h, w, 1)
+        trace2 = trace2[None,...,None] #(1, h, w, 1)
+        if self.image_shape is not None and self.image_shape != video[0].shape:
+            video = self.resizing(video)
+            first_frame = self.resizing(first_frame)
+            trace1 = self.resizing(trace1)
+            trace2 = self.resizing(trace2)
+            
+        video = self.rescale(video)[...,0] # (ph_steps, h, w)
+        first_frame = self.rescale(first_frame)[0,:,:,0] # (h, w)
+        trace1 = trace1[0,:,:,0] # (h, w)
+        trace2 = trace2[0,:,:,0] # (h, w)    
         return video, mask, first_frame, trace1, trace2, trace1_index, trace2_index
     
 short = ['0X106766224781FAE2.avi',

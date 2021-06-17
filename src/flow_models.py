@@ -55,11 +55,11 @@ class fVAE(VAE):
         self.grad_flow_metric = tfk.metrics.Mean(name = 'grad flow ↓')
         self.dist = tfpl.IndependentNormal(config.dim_y)
         
-    def call(self, inputs):
+    def call(self, inputs, training):
         y = inputs[0]
         mask = inputs[1]
         y_0 = inputs[2]
-        p_y_x, phi_y_x, q_x_y, x = self.forward(y, mask, y_0)        
+        p_y_x, phi_y_x, q_x_y, x = self.forward(y, mask, y_0, training)        
         logpy_x, logpx, logqx_y = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'))
         elbo = logpy_x + logpx - logqx_y
         self.elbo_metric.update_state(elbo)
@@ -77,10 +77,10 @@ class fVAE(VAE):
                    }
         return p_y_x, metrices
 
-    def forward(self, y, mask, y_0):
-        q_x_y = self.encoder(y)
+    def forward(self, y, mask, y_0, training):
+        q_x_y = self.encoder(y, training)
         x = q_x_y.sample()
-        phi_y_x = self.decoder(x)
+        phi_y_x = self.decoder(x, training)
         if self.debug:
             tf.debugging.assert_equal(phi_y_x.batch_shape, (*y.shape, 2), "{0} vs {1}".format(phi_y_x.batch_shape, (*y.shape, 2)))
             tf.debugging.assert_equal(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x)))
@@ -88,7 +88,7 @@ class fVAE(VAE):
 
         phi_mu = phi_y_x.mean() #bs, t, w, h, 2
         y_mu = warp(phi_mu, y_0)
-        y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
+        y_sigma = tf.ones_like(y_mu, dtype='float32') * tfp.math.softplus_inverse(0.01) # softplus is used so a -4.6 approx std 0.01
         y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
         y_sigma = tf.reshape(y_sigma, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
         p_y_x = self.dist(tf.concat([y_mu, y_sigma], axis=-1))
@@ -101,7 +101,7 @@ class fVAE(VAE):
         y = inputs[0]
         mask = inputs[1]
         y_0 = inputs[2]
-        p_y_x, phi_y_x, q_x_y, x = self.forward(y, mask, y_0)
+        p_y_x, phi_y_x, q_x_y, x = self.forward(y, mask, y_0, False)
         phi_hat = phi_y_x.sample()
         
         y_hat = p_y_x.sample()
@@ -127,11 +127,11 @@ class fKVAE(KVAE):
         self.grad_flow_metric = tfk.metrics.Mean(name = 'grad flow ↓')
         self.dist = tfpl.IndependentNormal(config.dim_y)
     
-    def call(self, inputs):
+    def call(self, inputs, training):
         y = inputs[0]
         mask = inputs[1]
         y_0 = inputs[2]
-        p_y_x, phi_y_x, q_x_y, x, x_smooth, p_zt_xT = self.forward(y, mask, y_0)
+        p_y_x, phi_y_x, q_x_y, x, x_smooth, p_zt_xT = self.forward(y, mask, y_0, training)
         
         logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, p_zt_xT)
         
@@ -154,11 +154,11 @@ class fKVAE(KVAE):
 
         return p_y_x, metrices
     
-    def forward(self, y, mask, y_0):
-        phi_y_x, q_x_y, x, x_smooth, p_zt_xT =  super().forward(y, mask)
+    def forward(self, y, mask, y_0, training):
+        phi_y_x, q_x_y, x, x_smooth, p_zt_xT =  super().forward(y, mask, training)
         phi_sample = phi_y_x.mean() #bs, t, w, h, 2
         y_mu = warp(phi_sample, y_0)
-        y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
+        y_sigma = tf.ones_like(y_mu, dtype='float32') * tfp.math.softplus_inverse(0.01) # softplus is used so a -4.6 approx std 0.01
         y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
         y_sigma = tf.reshape(y_sigma, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
         p_y_x = self.dist(tf.concat([y_mu, y_sigma], axis=-1))
@@ -170,7 +170,7 @@ class fKVAE(KVAE):
         y_0 = inputs[2]#[:,0,...]
         y = inputs[0]
         mask = inputs[1]
-        q_x_y = self.encoder(y) 
+        q_x_y = self.encoder(y, False) 
         x = q_x_y.sample()
         
         #Smooth
@@ -179,9 +179,9 @@ class fKVAE(KVAE):
         # Filter        
         filt_dist, filt_pred_dist = self.kf.get_filter_dist(x, mask, True)
          
-        phi_hat_filt = self.decoder(filt_dist.sample()).sample()
-        phi_hat_pred = self.decoder(filt_pred_dist.sample()).sample()
-        phi_hat_smooth = self.decoder(smooth_dist.sample()).sample()
+        phi_hat_filt = self.decoder(filt_dist.sample(), False).sample()
+        phi_hat_pred = self.decoder(filt_pred_dist.sample(), False).sample()
+        phi_hat_smooth = self.decoder(smooth_dist.sample(), False).sample()
         phi_hat_vae = self.decoder(x).sample()  
         
         y_hat_filt = warp(phi_hat_filt, y_0)
@@ -257,7 +257,7 @@ class Bspline(tf.keras.layers.Layer):
         flow = -d*np.asarray(self.dim_y)[None, None,...]
         flow = tf.reshape(flow, (bs, ph_steps, *self.dim_y, 2))
         mu = flow
-        sigma = tf.ones_like(mu, dtype='float32') * 0.01
+        sigma = tf.ones_like(mu, dtype='float32') * tfp.math.softplus_inverse(0.01) # softplus is used so a -4.6 approx std 0.01
 
         mu = tf.reshape(mu, (-1, mu.shape[1], np.prod(mu.shape[2:])))
         sigma = tf.reshape(sigma, (-1, mu.shape[1], np.prod(mu.shape[2:])))
@@ -277,10 +277,10 @@ class ufKVAE(fKVAE):
         super(ufKVAE, self).__init__(name=name, config=config, unet_decoder = True, **kwargs)
         self.u_encoder = Encoder(self.config, unet=True)
     
-    def forward(self, y, mask, y_0):
+    def forward(self, y, mask, y_0, training):
         # Encoder
-        q_x_y = self.encoder(y)
-        p_x_y0, feats = self.u_encoder(y_0[:,None,:,:])
+        q_x_y = self.encoder(y, training)
+        p_x_y0, feats = self.u_encoder(y_0[:,None,:,:], traning)
         
         x_0 = p_x_y0.sample()
 
@@ -296,17 +296,17 @@ class ufKVAE(fKVAE):
         phi_y_x = self.decoder([x_in, feats])
         phi = phi_y_x.mean()
         y_mu = warp(phi, y_0)
-        y_sigma = tf.ones_like(y_mu, dtype='float32') * 0.01
+        y_sigma = tf.ones_like(y_mu, dtype='float32') * tfp.math.softplus_inverse(0.01) # softplus is used so a -4.6 approx std 0.01
         y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
         y_sigma = tf.reshape(y_sigma, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:])))
         p_y_x = self.normal(tf.concat([y_mu, y_sigma], axis=-1))
         return p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, p_zt_xT
     
-    def call(self, inputs):
+    def call(self, inputs, traning):
         y = inputs[0]
         mask = inputs[1]
         y_0 = inputs[2]
-        p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, p_zt_xT = self.forward(y, mask, y_0)
+        p_y_x, phi_y_x, q_x_y, p_x_y0, x, x_smooth, p_zt_xT = self.forward(y, mask, y_0, traning)
         logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, 
                                                                    y, 
                                                                    q_x_y, 
@@ -341,8 +341,8 @@ class ufKVAE(fKVAE):
         y_0 = inputs[2]#[:,0,...]
         y = inputs[0]
         mask = inputs[1]
-        q_x_y = self.encoder(y) 
-        p_x_y0, feats = self.u_encoder(y_0[:,None,:,:])
+        q_x_y = self.encoder(y, False) 
+        p_x_y0, feats = self.u_encoder(y_0[:,None,:,:], False)
         x_0 = p_x_y0.sample()
         x = q_x_y.sample()
         
@@ -367,12 +367,12 @@ class ufKVAE(fKVAE):
         x_filt = filt_dist.sample()
         X_0 = tf.repeat(x_0, x_filt.shape[1], axis=1)
         x_in = tf.concat([x_filt, X_0], axis=-1)
-        phi_hat_filt = self.decoder([x_in, feats]).sample()
+        phi_hat_filt = self.decoder([x_in, feats], False).sample()
         x_smooth = smooth_dist.sample()
         x_in = tf.concat([x_smooth, X_0], axis=-1)
-        phi_hat_smooth = self.decoder([x_in, feats]).sample()
+        phi_hat_smooth = self.decoder([x_in, feats], False).sample()
         x_in = tf.concat([x, X_0], axis=-1)
-        phi_hat_vae = self.decoder([x_in, feats]).sample()  
+        phi_hat_vae = self.decoder([x_in, feats], False).sample()  
         
         y_hat_filt = warp(phi_hat_filt, y_0)
         y_hat_smooth = warp(phi_hat_smooth, y_0)
