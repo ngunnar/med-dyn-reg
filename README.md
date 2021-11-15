@@ -12,6 +12,7 @@ cv2 4.5.1
 pandas 1.2.2
 tqdm 4.57.0
 json 2.0.9
+voxelmorph
 ```
 
 ## Architecture
