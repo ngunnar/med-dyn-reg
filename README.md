@@ -12,7 +12,10 @@ cv2 4.5.1
 pandas 1.2.2
 tqdm 4.57.0
 json 2.0.9
-voxelmorph
+voxelmorph 0.1
+SimpleITK 2.0.2
+tqdm 4.56.0
+matplotlib 3.3.4
 ```
 
 ## Architecture (TODO)
