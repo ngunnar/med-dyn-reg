@@ -1,5 +1,6 @@
 from collections import namedtuple
 import numpy as np
+from tqdm import tqdm
 def get_config(
     #DS
     dim_y = (112,112),
@@ -10,27 +11,26 @@ def get_config(
     #VAE
     activation = 'relu',
     filter_size = 3,
-    enc_filters = [64, 128, 256, 512],
-    dec_filters = [64, 128, 256, 512],
-    use_subpixel = [True, True, True, True], # True - more parameters in decoder, especially in layers with many filters
+    enc_filters = [16, 32, 64, 128],
+    dec_filters = [16, 32, 64, 128],
+    use_kernel = False,
     # LGSSM
     dim_x = 16,
     dim_z = 32,
-    noise_emission =  0.03,
-    noise_transition =  0.08,
+    dec_input_dim = 16,
+    noise_emission =  0.1, # x noise
+    noise_transition =  0.1, # z noise
     init_cov = 1.0, #30.0
     trainable_A = True,
     trainable_C = True,
     trainable_R = True,
     trainable_Q = True,
-    trainable_mu = True,
-    trainable_sigma = True,
-    sigma_full = False,
-    sample_z = False,
-    K = 1,
+    #trainable_mu = True,
+    #trainable_sigma = True,
+    #sigma_full = False,
     # Training
     gpu = '0',
-    num_epochs = 100,
+    num_epochs = 50,
     start_epoch = 1,
     model_path = None,
     batch_size = 4,
@@ -43,10 +43,14 @@ def get_config(
     kf_loss_weight = 1.0,
     kl_growth = 3.0,
     kl_cycle = 20,
-    only_vae_epochs = 5,
+    only_vae_epochs = 0, #Changed this to 0 instead?
     # Plotting
-    plot_epoch = 1,
+    plot_epoch = 1
 ):
+    assert dec_input_dim == dim_z or dec_input_dim == dim_x, "dec_input_dim must be {0} or {1}".format(dim_z, dim_x)
+    if ds_size is not None and ds_size < batch_size:
+        tqdm.write("Changing batch_size from {0} to {1}".format(batch_size, ds_size))
+        batch_size = ds_size
     
     config_dict = {
         # DS
@@ -60,7 +64,9 @@ def get_config(
         'filter_size': filter_size,
         'enc_filters':enc_filters,
         'dec_filters':dec_filters,
-        'use_subpixel':use_subpixel,
+        'dec_input_dim': dec_input_dim,
+        'use_kernel': use_kernel,
+        #'use_subpixel':use_subpixel,
         # LGSSM
         "dim_x": dim_x,
         "dim_z": dim_z,
@@ -71,11 +77,10 @@ def get_config(
         "trainable_C":trainable_C,
         "trainable_R":trainable_R,
         "trainable_Q":trainable_Q,
-        "trainable_mu":trainable_mu,
-        "trainable_sigma":trainable_sigma,
-        "sigma_full":sigma_full,
-        "sample_z": sample_z,
-        "K": K,
+        #"trainable_mu":trainable_mu,
+        #"trainable_sigma":trainable_sigma,
+        #"sigma_full":sigma_full,
+        #"K": K,
         # Training
         "gpu": gpu,
         "num_epochs": num_epochs,

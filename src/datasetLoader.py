@@ -103,8 +103,8 @@ class TensorflowDatasetLoader():
                  max_length=250, 
                  clips=1,
                  pad=None,
-                 size = None,
-                 output_first_frame = False):
+                 size = None):
+                 #output_first_frame = False):
         if root is None:
             root = '/data/Niklas/EchoNet-Dynamics'
         
@@ -123,29 +123,25 @@ class TensorflowDatasetLoader():
         
         self.idxs = []
         df = pd.read_csv(self.folder / "FileList.csv")
+        self.removed = 0
         for index, row in df.iterrows():
             fileMode = row['Split'].lower()
             fileName = row['FileName'] + '.avi'
             if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
                 if fileName in short:
+                    self.removed += 1
                     continue
                 if size is not None and len(self.idxs) >= size:
                     break
                 self.idxs.append(fileName)
-
-        if output_first_frame:
-            data = tf.data.Dataset.from_generator(
-            self.flow_generator(),
-            tuple([tf.float32, tf.bool, tf.float32]),
-            tuple([(self.length, *self.image_shape),(self.length), (self.image_shape)]))
-        else:    
-            data = tf.data.Dataset.from_generator(
-                self.generator(),
-                tuple([tf.float32, tf.bool]),
-                tuple([(self.length, *self.image_shape),(self.length)]))
+        data = tf.data.Dataset.from_generator(
+            self.generator(),
+            tuple([tf.float32, tf.bool]),
+            tuple([(self.length, *self.image_shape),(self.length)]))
         self.data = data
         self.resizing = tf.keras.layers.experimental.preprocessing.Resizing(self.image_shape[0], self.image_shape[1], interpolation='bilinear')
         self.rescale = tf.keras.layers.experimental.preprocessing.Rescaling(1 / 255., offset=0.0)
+        self.external_mask = np.load(root + '/external_mask.npy')
     
     def _read_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
@@ -167,7 +163,7 @@ class TensorflowDatasetLoader():
             # Pad video with frames filled with zeros if too short
             # 0 represents the mean color (dark grey), since this is after normalization
             video = np.concatenate((video, np.zeros((length * self.period - f, h, w), video.dtype)), axis=0)
-            mask = np.concatenate((mask, np.ones((length * self.period - f), "bool")), axis=0)
+            mask = np.concatenate((mask, np.ones((length * self.period - f), dtype="bool")), axis=0)
             f, h, w = video.shape  # pylint: disable=E0633
 
         if self.clips == "all":
@@ -179,7 +175,7 @@ class TensorflowDatasetLoader():
                 start = np.random.choice(f - (length) * self.period, self.clips)
             else:
                 start = [0]
-        first_frame = video[start[0],...]
+        #first_frame = video[start[0],...]
         video = tuple(video[s + self.period * np.arange(length), :, :] for s in start)
         mask = tuple(mask[s + self.period * np.arange(length)] for s in start)
         if self.clips == 1:
@@ -200,31 +196,23 @@ class TensorflowDatasetLoader():
             video = temp[:, :, i:(i + h), j:(j + w)]
         
         video = video[...,None] #(ph_steps, h, w 1)
-        first_frame = first_frame[None,...,None] #(1, h, w, 1)
+        #first_frame = first_frame[None,...,None] #(1, h, w, 1)
         if self.image_shape is not None and self.image_shape != video[0].shape:
             video = self.resizing(video)
-            first_frame = self.resizing(first_frame)
+            #first_frame = self.resizing(first_frame)
             
         video = self.rescale(video)[...,0] # (ph_steps, h, w)
-        first_frame = self.rescale(first_frame)[0,:,:,0] # (h, w)
-        return video, mask, first_frame
+        #first_frame = self.rescale(first_frame)[0,:,:,0] # (h, w)
+        
+        return video, mask#, first_frame 
 
     def generator(self):
         def gen():
             for idx in self.idxs:
-                video, mask, _ = self._read_video(idx)
+                video, mask = self._read_video(idx)
                 if np.any(mask == True):
                     tqdm.write(idx)           
                 yield tuple([video, mask])
-        return gen
-
-    def flow_generator(self):
-        def gen():
-            for idx in self.idxs:
-                video, mask, first_frame = self._read_video(idx)
-                if np.any(mask == True):
-                    tqdm.write(idx)           
-                yield tuple([video, mask, first_frame])
         return gen
 
 import collections
@@ -255,7 +243,7 @@ class EvalTensorflowDatasetLoader():
                  root=None, 
                  image_shape = (64,64), 
                  split = 'train', 
-                 period=2,
+                 length = 50,
                  max_length=250, 
                  clips=1,
                  pad=None,
@@ -271,7 +259,7 @@ class EvalTensorflowDatasetLoader():
         self.folder = pathlib.Path(root)
         self.split = split
         self.max_length = max_length
-        self.period = period
+        self.length = length
         self.clips = clips
         self.pad = pad
         
@@ -282,6 +270,8 @@ class EvalTensorflowDatasetLoader():
             fileName = row['FileName'] + '.avi'
             if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
                 if fileName in short:
+                    continue
+                if fileName in long_seg or fileName in trace_error:
                     continue
                 if size is not None and len(self.idxs) >= size:
                     break
@@ -313,7 +303,6 @@ class EvalTensorflowDatasetLoader():
     def _read_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
         video = loadvideo(video).astype(np.float32)
-
         trace1_index = min(self.frames[idx])
         trace2_index = max(self.frames[idx])
         trace1 = read_trace(self.trace[idx][trace1_index], video)
@@ -321,10 +310,21 @@ class EvalTensorflowDatasetLoader():
 
         f, h, w = video.shape
         mask = np.zeros(f, dtype='bool')
-
-        first_frame = video[trace1_index,...]
-        video = video[np.arange(trace1_index, trace2_index+1, self.period), :, :]
-        mask = mask[np.arange(trace1_index, trace2_index+1, self.period)]
+        
+        seg_frame = (trace2_index - trace1_index)
+        if trace1_index + self.length > f:
+            video = video[trace1_index:, :, :]                
+            mask = mask[trace1_index:]
+            diff = trace1_index + self.length - f
+            video =  np.concatenate([video, np.zeros((diff, *video.shape[1:]))], axis=0)
+            mask = np.concatenate([mask, np.ones((diff), dtype='bool')], axis=0)
+        else:
+            video = video[trace1_index + np.arange(self.length), :, :]
+            mask = mask[trace1_index + np.arange(self.length)]
+        
+        #video = video[np.arange(trace1_index, trace2_index+1, self.period), :, :]
+        #mask = mask[np.arange(trace1_index, trace2_index+1, self.period)]
+        
         #if self.clips == 1:
         #    video = video[0]
         #    mask = mask[0]
@@ -343,21 +343,34 @@ class EvalTensorflowDatasetLoader():
             video = temp[:, :, i:(i + h), j:(j + w)]
         
         video = video[...,None] #(ph_steps, h, w 1)
-        first_frame = first_frame[None,...,None] #(1, h, w, 1)
         trace1 = trace1[None,...,None] #(1, h, w, 1)
         trace2 = trace2[None,...,None] #(1, h, w, 1)
         if self.image_shape is not None and self.image_shape != video[0].shape:
             video = self.resizing(video)
-            first_frame = self.resizing(first_frame)
             trace1 = self.resizing(trace1)
             trace2 = self.resizing(trace2)
             
         video = self.rescale(video)[...,0] # (ph_steps, h, w)
-        first_frame = self.rescale(first_frame)[0,:,:,0] # (h, w)
         trace1 = trace1[0,:,:,0] # (h, w)
-        trace2 = trace2[0,:,:,0] # (h, w)    
-        return video, mask, first_frame, trace1, trace2, trace1_index, trace2_index
+        trace2 = trace2[0,:,:,0] # (h, w)
+              
+        return video, mask, trace1, trace2, seg_frame
+
     
+long_seg = ['0X280B7441A7E287B2.avi', '0X4154F112065C857B.avi', '0X6E5824E76BEB3ECA.avi']
+trace_error = ['0X200A81BEC98DEB6D.avi',
+ '0X2AC09763183674E8.avi',
+ '0X2AD994F98C491FA6.avi',
+ '0X3269691452F4F42A.avi',
+ '0X383838D5E679ACFE.avi',
+ '0X3C63C23E5B0823D.avi',
+ '0X4477077E68BF47B2.avi',
+ '0X47760ED572E13C7A.avi',
+ '0X49620F7B3E4CA28A.avi',
+ '0X6050E603BC35F0D.avi',
+ '0X6C124671AA84BFE1.avi',
+ '0X75ED030E56E85A27.avi']
+
 short = ['0X106766224781FAE2.avi',
 '0X10D734CBEB6ECB81.avi',
 '0X1185DA5AB0D9BE6A.avi',

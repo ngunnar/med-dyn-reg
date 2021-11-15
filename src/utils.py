@@ -4,14 +4,13 @@ import cv2
 import matplotlib.pyplot as plt
 import tensorflow as tf
 
-
 def plot(data, title, max_i, axs):
     for k in range(0, max_i):
         if k==0:
             #axs[k].title.set_text(title)
             axs[k].set_ylabel(title)
         if data.shape[-1] == 2:
-            axs[k].imshow(draw_hsv(data[k,...]))            
+            axs[k].imshow(draw_hsv(data[k,...]))
         else:           
             axs[k].imshow(data[k,...], cmap='gray')
 
@@ -144,17 +143,21 @@ def plot_to_image(y, data_arg):
     # Add the batch dimension
     image = tf.expand_dims(image, 0)
     return image
-    
-def A_to_image(model):
-    eigenvalues = [e.numpy() for e in tf.linalg.eig(model.kf.kalman_filter.transition_matrix)[0]]
+
+def plot_A(model):
+    eigenvalues = [e.numpy() for e in tf.linalg.eig(model.lgssm.A)[0]]
     
     figure, ax = plt.subplots(1,1, figsize=(10,10))
     ax.axis('off')
     circ = plt.Circle((0, 0), radius=1, edgecolor='b', facecolor='None')
     ax.add_patch(circ)
     [plt.plot(e.real, e.imag, 'go--', linewidth=2, markersize=12) for e in eigenvalues]
-    title = str(model.kf.kalman_filter.transition_matrix.numpy())+ '\n'+ str(eigenvalues)
-    ax.title.set_text(title)  
+    #title = str(model.lgssm.LGSSM.transition_matrix.numpy())+ '\n'+ str(eigenvalues)
+    #ax.title.set_text(title)
+    return figure, ax
+
+def A_to_image(model):
+    figure, ax = plot_A(model)
     # Save the plot to a PNG in memory.
     buf = io.BytesIO()
     plt.savefig(buf, format='png')

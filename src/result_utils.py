@@ -8,27 +8,21 @@ import numpy as np
 import math
 import tensorflow as tf
 
+from .metrics import batch_jacobian_determinant
+
 def get_config(path):
     print('%s/%s' % (os.path.dirname(path), 'config.json'))
     print(os.path.dirname(path))
     with open('%s/%s' % (os.path.dirname(path), 'config.json')) as data_file:
         config_dict = json.load(data_file)
     
-    print('use_subpixel' in config_dict)
-    if 'use_subpixel' not in config_dict:
-        config_dict['use_subpixel'] = [True, True, True, True]
-    if 'filters' in config_dict:
-        config_dict['enc_filters'] = config_dict['filters'] 
-        config_dict['dec_filters'] = config_dict['filters']
-    
-    print(config_dict['use_subpixel'], config_dict['enc_filters'], config_dict['dec_filters'])
     config = namedtuple("Config", config_dict.keys())(*config_dict.values())
     return config, config_dict
 
 def load_model(path, Model, file):
     config, config_dict = get_config(path)
     model = Model(config = config)
-    model.load_weights(path + '/' + file)#.expect_partial()
+    model.load_weights(path + '/' + file).expect_partial()
     return model, config
 
 def plot_latents(data, model, save_dir=None):
@@ -92,7 +86,9 @@ def plot_latents(data, model, save_dir=None):
         plt.show()
 
 def get_x(y_true, masks, model):
-    x_vae = model.encoder(y_true).sample()
+    mu, sigma = model.encoder(y_true)
+    x_vae = model.encoder_dist(tf.concat([mu, sigma], axis=-1)).sample()
+    
     data = []
     for mask in masks:
         latent_data = model.get_latents([y_true, mask[None,...]])
@@ -283,7 +279,7 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, l
     else:
         plt.show()
         
-def create_animation(y_true, steps, last, model, y_0 = None, save_dir = None):
+def create_animation(y_true, steps, last, model, save_dir = None, show_jac = False):
     length = y_true.shape[1]
     mask = np.ones(shape=length).astype('bool')
     known = np.arange(length)
@@ -291,12 +287,17 @@ def create_animation(y_true, steps, last, model, y_0 = None, save_dir = None):
     mask[known] = False    
     
     data = [y_true, mask[None,...]]
-    if y_0 is not None:
-        data.append(y_0)
     result = model.predict(data)
-    y_smooth_val = next(item for item in result if item["name"] == "smooth")['data']
-    y_vae_val = next(item for item in result if item["name"] == "vae")['data']
-    y_filt_val = next(item for item in result if item["name"] == "pred")['data']
+    
+    y_smooth = next(item for item in result if item["name"] == "smooth")['data']
+    phi_smooth = next(item for item in result if item["name"] == "smooth_flow")['data']
+
+    y_pred = next(item for item in result if item["name"] == "pred")['data']
+    phi_pred = next(item for item in result if item["name"] == "pred_flow")['data']
+    
+    #jac_filt = batch_jacobian_determinant(phi_hat_filt)<=0
+    jac_smooth = batch_jacobian_determinant(phi_smooth)<=0
+    jac_pred = batch_jacobian_determinant(phi_pred)<=0
     
     fig, axs = plt.subplots(1,4,figsize= [8.0*4, 6.0*1])
     axs = axs.flatten()
@@ -318,24 +319,31 @@ def create_animation(y_true, steps, last, model, y_0 = None, save_dir = None):
         if np.all(d[i,...] == 0.0):
             return ax.imshow(d[i,...]+1.0, cmap=cmap, vmin=0, vmax=1)
         elif d.shape[0] > i:
-            return ax.imshow(d[i,...], cmap=cmap,vmin=0, vmax=1)
+            return ax.imshow(d[i,...], cmap=cmap)#,vmin=0, vmax=1)
         else:
-            return ax.imshow(np.zeros_like(d[0,...]), cmap=cmap,vmin=0, vmax=1)
+            return ax.imshow(np.zeros_like(d[0,...]), cmap=cmap)#,vmin=0, vmax=1)
    
     ims = []
     k = 0
-    for i in range(y_filt_val.shape[1]):
+    for i in range(y_pred.shape[1]):
         if mask[i] == False:
             k = i
-        im0 = plot(axs[0], y_true[0,...], False,k)
-        im1 = plot(axs[1], y_smooth_val[0,...], mask[i],i)
-        im2 = plot(axs[2], y_filt_val[0,...], mask[i],i)
-        im3 = plot(axs[3], y_true[0,...], False,i)
+            
+        im = []
+        if show_jac:
+            im += axs[1].contour(jac_smooth[0,i,...], colors='r').collections
+            im += axs[2].contour(jac_pred[0,i,...], colors='r').collections
+        
+        im += [plot(axs[0], y_true[0,...], False,k)]
+        im += [plot(axs[1], y_smooth[0,...], mask[i],i)]
+        im += [plot(axs[2], y_pred[0,...], mask[i],i)]
+        im += [plot(axs[3], y_true[0,...], False,i)]
 
         title = axs[0].text(0.5,1.05,"Input t={}".format(i), 
                         size=plt.rcParams["axes.titlesize"],
                         ha="center", transform=axs[0].transAxes, )
-        ims.append([im0, im1, im2, im3, title])
+        im += [title]
+        ims.append(im)
 
     anim = animation.ArtistAnimation(fig, ims, interval=150, blit=True)
     if save_dir is not None:

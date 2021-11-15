@@ -4,8 +4,7 @@ import tensorflow_addons as tfa
 from tqdm import tqdm
 
 from .layers import Encoder, Decoder
-from .kalman_filter import KalmanFilter as Linear_KF
-from .kalman_filter_k import KalmanFilterK as K_KF
+from .lgssm import LGSSM
 
 from .utils import plot_to_image, latent_plot
 
@@ -15,6 +14,7 @@ tfpl = tfp.layers
 
 import numpy as np
 import os
+#@tf.function
 def save_if_error(gradients, inputs, model):
     if any([np.any(np.isnan(g.numpy())) for g in gradients]):
         path = './error'
@@ -27,7 +27,6 @@ class VAE(tfk.Model):
     def __init__(self, 
                  config,
                  output_channels=1,
-                 unet_decoder=False,
                  elbo_name='elbo = log p(y|x) + log p(x) - log q(x|y)',
                  name="vae",
                  debug = False,
@@ -36,18 +35,24 @@ class VAE(tfk.Model):
         self.config = config
         self.debug = debug
         self.encoder = Encoder(self.config)
-        self.decoder = Decoder(self.config, output_channels = output_channels, unet=unet_decoder)
-        #self.prior = tfd.Normal(loc=tf.zeros(config.dim_x, dtype='float32'),
-        #                        scale = tf.ones(config.dim_x, dtype='float32'))
+        self.decoder = Decoder(self.config, output_channels = output_channels)
         self.prior = tfd.Independent(
             tfd.Normal(
                 loc=tf.zeros(config.dim_x, dtype='float32'),
                 scale=tf.ones(config.dim_x, dtype='float32')),
                         reinterpreted_batch_ndims=1)
-
-        self.log_py_x_metric = tfk.metrics.Mean(name = 'log p(y|x) ↑')
-        self.log_px_metric = tfk.metrics.Mean(name = 'log p(x) ↑')
-        self.log_qx_y_metric = tfk.metrics.Mean(name = 'log q(x|y) ↓')
+        
+        self.encoder_dist = tfpl.IndependentNormal(config.dim_x)
+        
+        decoder_dist = tfpl.IndependentNormal
+        if output_channels > 1:
+            self.decoder_dist = decoder_dist((*config.dim_y,output_channels))
+        else:
+            self.decoder_dist = decoder_dist(config.dim_y)
+        
+        self.log_pdec_metric = tfk.metrics.Mean(name = 'log p(y|x) ↑')
+        self.log_prior_metric = tfk.metrics.Mean(name = 'log p(x) ↑')
+        self.log_qenc_metric = tfk.metrics.Mean(name = 'log q(x|y) ↓')
         self.elbo_metric = tfk.metrics.Mean(name = elbo_name)
 
         self.ssim_metric = tfk.metrics.Mean(name = 'ssim ↑')
@@ -57,16 +62,20 @@ class VAE(tfk.Model):
         self.w_recon = self.config.scale_reconstruction
         self.w_kl = self.config.kl_latent_loss_weight
     
-    def get_loss(self, py_x, y, qx_y, px, x, mask):
-        logpx = tf.reduce_sum(tf.multiply(px.log_prob(x), mask), axis=-1)
-        logqx_y = tf.reduce_sum(tf.multiply(qx_y.log_prob(x), mask), axis=-1)
-        logpy_x = tf.reduce_sum(tf.multiply(py_x.log_prob(y), mask), axis=-1)
+    def get_loss(self, p_dec, y, q_enc, prior, x_sample, mask):
+        mask_ones = tf.cast(mask == False, dtype='float32')
+        log_prior = tf.reduce_sum(tf.multiply(prior.log_prob(x_sample), mask_ones), axis=-1)
+        log_qenc = tf.reduce_sum(tf.multiply(q_enc.log_prob(x_sample), mask_ones), axis=-1)
+        log_pdec = tf.reduce_sum(tf.multiply(p_dec.log_prob(y), mask_ones), axis=-1)
+        #shape = (x.shape[0], x.shape[1], -1)
+        #ssd = tf.reduce_sum((tf.reshape(py_x.mean(), shape) - tf.reshape(y, shape))**2, axis=-1)
+        #logpy_x = -tf.reduce_sum(tf.multiply(ssd, mask), axis=-1)
                 
-        self.log_py_x_metric.update_state(logpy_x)
-        self.log_px_metric.update_state(logpx)
-        self.log_qx_y_metric.update_state(logqx_y)
+        self.log_pdec_metric.update_state(log_pdec)
+        self.log_prior_metric.update_state(log_prior)
+        self.log_qenc_metric.update_state(log_qenc)
         
-        y_pred = py_x.sample()
+        y_pred = p_dec.sample()
         if self.debug:
             tf.debugging.assert_equal(y_pred.shape, y.shape)
         
@@ -76,54 +85,58 @@ class VAE(tfk.Model):
         ssim = tf.reshape(ssim, (-1, y.shape[1]))
         self.ssim_metric.update_state(tf.reduce_mean(ssim, axis=-1))
         
-        return logpy_x, logpx, logqx_y
+        return log_pdec, log_prior, log_qenc
        
 
     def call(self, inputs, traning):
         y = inputs[0]
         mask = inputs[1]
-        p_y_x, q_x_y, x = self.forward(y, mask, traning)
+        p_dec, q_enc, x_sample = self.forward(y, mask, traning)
         
-        logpy_x, logpx, logqx_y = self.get_loss(p_y_x, y, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'))
-        elbo = logpy_x + logpx - logqx_y
+        log_pdec, log_prior, log_qenc = self.get_loss(p_dec, y, q_enc, self.prior, x_sample, mask)
+        elbo = log_pdec + log_prior - log_qenc
         self.elbo_metric.update_state(elbo)
-        loss = -(self.w_recon * logpy_x + self.w_kl*(logpx - logqx_y))
+        loss = -(self.w_recon * log_pdec + self.w_kl*(log_prior - log_qenc))
         self.loss_metric.update_state(loss)
         self.add_loss(loss)
         
-        metrices = {'log p(y|x)':tf.reduce_mean(logpy_x).numpy(), 
-                    'log p(x)': tf.reduce_mean(logpx).numpy(), 
-                    'log q(x|y)': tf.reduce_mean(logqx_y).numpy()
+        metrices = {'log p(y|x)':tf.reduce_mean(log_pdec).numpy(), 
+                    'log p(x)': tf.reduce_mean(log_prior).numpy(), 
+                    'log q(x|y)': tf.reduce_mean(log_qenc).numpy()
                    }
         
-        return p_y_x, metrices
+        return p_dec, metrices
     
     def forward(self, y, mask, traning):
-        q_x_y = self.encoder(y, traning)
-        x = q_x_y.sample()
-        p_y_x = self.decoder(x, traning)
+        mu, sigma = self.encoder(y, traning)
+        q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
+        x_sample = q_enc.sample()
+        mu, sigma = self.decoder(x_sample, traning)
+        p_dec = self.decoder_dist(tf.concat([mu, sigma], axis=-1))
+        
         if self.debug:
-            tf.debugging.assert_equal(p_y_x.batch_shape, y.shape, "{0} vs {1}".format(p_y_x.batch_shape, y.shape))
-            tf.debugging.assert_equal(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(q_x_y.batch_shape, (*y.shape[0:2], self.config.dim_x)))
-            tf.debugging.assert_equal(x.shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(x.shape, (*y.shape[0:2], self.config.dim_x)))
-        return p_y_x, q_x_y, x
+            tf.debugging.assert_equal(p_dec.batch_shape, y.shape, "{0} vs {1}".format(p_dec.batch_shape, y.shape))
+            tf.debugging.assert_equal(q_enc.batch_shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(q_enc.batch_shape, (*y.shape[0:2], self.config.dim_x)))
+            tf.debugging.assert_equal(x_sample.shape, (*y.shape[0:2], self.config.dim_x), "{0} vs {1}".format(x_sample.shape, (*y.shape[0:2], self.config.dim_x)))
+        return p_dec, q_enc, x_sample
     
     @tf.function
     def predict(self, inputs):
-        y_true = inputs[0]
+        y = inputs[0]
         mask = inputs[1]
-        p_y_x, q_x_y, x = self.forward(y_true, mask, False)
-        y_hat = p_y_x.sample()
+        p_dec, q_enc, x_sample = self.forward(y, mask, False)
+        y_sample = p_dec.sample()
         if self.debug:
-            tf.debugging.assert_equal(y_true.shape, y_hat.shape, "{0} vs {1}".format(y_true.shape, y_hat.shape))
-        return [{'name':'vae', 'data': y_hat}]
+            tf.debugging.assert_equal(y.shape, y_sample.shape, "{0} vs {1}".format(y.shape, y_sample.shape))
+        return [{'name':'vae', 'data': y_sample}]
     
     @tf.function
     def get_latents(self, inputs):
-        y_true = inputs[0]        
-        q_x_y = self.encoder(y_true, False)
-        x = q_x_y.sample()
-        return {"x":x}
+        y = inputs[0]
+        mu, sigma = self.encoder(y, False)
+        q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
+        x_sample = q_enc.sample()
+        return {"x":x_sample}
 
     def compile(self, num_batches):
         super(VAE, self).compile()
@@ -147,7 +160,7 @@ class VAE(tfk.Model):
                 "Latent Training data":latent_plot(train_latent),
                 "Latent Test data":latent_plot(test_latent)}
     
-    
+    @tf.function
     def train_step(self, inputs):
         with tf.GradientTape() as tape:
             _, metrices = self(inputs, training=True)
@@ -162,16 +175,17 @@ class VAE(tfk.Model):
                     variables = self.trainable_variables
         
         gradients = tape.gradient(loss, variables)
-        save_if_error(gradients, inputs, self)
+        #save_if_error(gradients, inputs, self)
         gradients, _ = tf.clip_by_global_norm(gradients, self.config.max_grad_norm)
         self.opt.apply_gradients(zip(gradients, variables))
-        metrices['loss'] = loss.numpy()
+        metrices['loss'] = loss#.numpy()
         return loss, metrices
     
+    @tf.function
     def test_step(self, inputs):
         _, metrices = self(inputs, training=False)
         loss = tf.reduce_mean(sum(self.losses))
-        metrices['loss'] = loss.numpy()
+        metrices['loss'] = loss#.numpy()
         return loss, metrices 
     
     def model(self):
@@ -179,8 +193,8 @@ class VAE(tfk.Model):
         return tf.keras.Model(inputs=[inputs], outputs=self.call(inputs))
     
     def info(self):
-        y = tf.keras.layers.Input(shape=(self.config.ph_steps, *self.config.dim_y), batch_size=1)
-        mask = tf.keras.layers.Input(shape=(self.config.ph_steps), batch_size=1)
+        y = tf.keras.layers.Input(shape=(self.config.ph_steps, *self.config.dim_y), batch_size=self.config.batch_size)
+        mask = tf.keras.layers.Input(shape=(self.config.ph_steps), batch_size=self.config.batch_size)
         inputs = [y,mask]
         self._print_info(inputs)
     
@@ -190,11 +204,11 @@ class VAE(tfk.Model):
         encoder = tf.keras.Model(inputs=y, outputs=self.encoder.call(y, False), name='Encoder')
         encoder.summary()
         
-        x_decoder = tf.keras.layers.Input(shape=(self.config.ph_steps, self.config.dim_x))
-        decoder = tf.keras.Model(inputs=[x_decoder], outputs=self.decoder.call(x_decoder, False), name='Decoder')
+        x_sample = tf.keras.layers.Input(shape=(self.config.ph_steps, self.config.dec_input_dim), batch_size=self.config.batch_size)
+        decoder = tf.keras.Model(inputs=[x_sample], outputs=self.decoder.call(x_sample, False), name='Decoder')
         decoder.summary()
         
-        bs = 2
+        bs = self.config.batch_size
         if len(inputs) > 2:            
             _ = self([np.zeros((bs,self.config.ph_steps,*self.config.dim_y), dtype='float32'), 
                       np.zeros((bs,self.config.ph_steps), dtype='bool'),
@@ -206,139 +220,175 @@ class VAE(tfk.Model):
 class KVAE(VAE):
     def __init__(self, config, name="kvae", elbo_name='elbo = log p(y|x) - log q(x|y) + log p(x,z) - log p(z|x)', **kwargs):
         super(KVAE, self).__init__(name=name, elbo_name = elbo_name, config=config, **kwargs)
-        self.log_pz_x_metric = tfk.metrics.Mean(name = 'log p(z|x) ↓')
-        self.log_pxz_metric = tfk.metrics.Mean(name = 'log p(x,z) ↑')
-        if config.K == 1:
-            self.kf = Linear_KF(self.config)
-        else:
-            self.kf = K_KF(self.config)
+        self.log_p_smooth_metric = tfk.metrics.Mean(name = 'log p(z|x) ↓')
+        self.log_p_joint_metric = tfk.metrics.Mean(name = 'log p(x,z) ↑')
+        self.lgssm = LGSSM(self.config)
         self.w_kf = self.config.kf_loss_weight
     
-    def get_loss(self, p_y_x, y, q_x_y, p_x, x, mask, x_smooth, p_zt_xT):
-        logpy_x, logpx, logqx_y = super(KVAE, self).get_loss(p_y_x, y, q_x_y, p_x, x, mask)        
-        log_pz_z, log_px_z, log_p0, log_pz_x = self.kf.get_loss(x_smooth, p_zt_xT)
-
-        log_pz_z = tf.multiply(log_pz_z, mask[:,1:])
-        log_px_z = tf.multiply(log_px_z, mask)
-        log_p0 = tf.multiply(log_p0, mask[:,0])
-        log_pz_x = tf.multiply(log_pz_x, mask)
-
-        log_pz_x = tf.reduce_sum(log_pz_x, axis=-1)
-        log_pxz = tf.reduce_sum(log_px_z, axis=-1) + log_p0 + tf.reduce_sum(log_pz_z, axis=-1)
+    def get_loss(self, y, x_sample, z_sample, q_enc, p_smooth, p_dec, mask, prior):
+        log_pdec, _, log_qenc = super(KVAE, self).get_loss(p_dec, y, q_enc, prior, x_sample, mask)        
         
-        self.log_pz_x_metric.update_state(log_pz_x)
-        self.log_pxz_metric.update_state(log_pxz)
-
-        return logpy_x, logpx, logqx_y, log_pxz, log_pz_x
-    
-    def call(self, inputs, training):
-        y_true = inputs[0]
-        mask = inputs[1]
-        p_y_x, q_x_y, x, x_smooth, p_zt_xT = self.forward(y_true, mask, training)
-        logpy_x, logpx, logqx_y, log_pxz, log_pz_x = self.get_loss(p_y_x, y_true, q_x_y, self.prior, x, tf.cast(mask == False, dtype='float32'), x_smooth, p_zt_xT)
+        log_prob_z_z1, log_prob_x_z, log_pz1, log_psmooth = self.lgssm.get_loss(x_sample, z_sample, p_smooth)
         
-        elbo = logpy_x - logqx_y + log_pxz - log_pz_x
-        loss = -(self.w_recon * logpy_x - self.w_kl*logqx_y + self.w_kf * (log_pxz - log_pz_x))
+        mask_ones = tf.cast(mask == False, dtype='float32')
+        log_prob_z_z1 = tf.multiply(log_prob_z_z1, mask_ones[:,1:])
+        log_prob_x_z = tf.multiply(log_prob_x_z, mask_ones)
+        log_pz1 = tf.multiply(log_pz1, mask_ones[:,0])
+        log_psmooth = tf.multiply(log_psmooth, mask_ones)
+
+        log_psmooth = tf.reduce_sum(log_psmooth, axis=-1)
+        log_pjoint = tf.reduce_sum(log_prob_x_z, axis=-1) + log_pz1 + tf.reduce_sum(log_prob_z_z1, axis=-1)
+        
+        self.log_p_smooth_metric.update_state(log_psmooth)
+        self.log_p_joint_metric.update_state(log_pjoint)
+        
+        elbo = log_pdec - log_qenc + log_pjoint - log_psmooth
+        
+        #shape = (y.shape[0], y.shape[1], -1)
+        #y_pred = p_dec.mean()#*self.external_mask
+        #ssd = tf.reduce_sum((tf.reshape(y_pred, shape) - tf.reshape(y, shape))**2, axis=-1)
+        #log_pdec_loss = -tf.reduce_sum(tf.multiply(ssd, mask_ones), axis=-1)
+        loss = -(self.w_recon * log_pdec - self.w_kl*log_qenc + self.w_kf * (log_pjoint - log_psmooth))
         
         self.elbo_metric.update_state(elbo)
         self.loss_metric.update_state(loss)
         self.add_loss(loss)
         
-        metrices = {'log p(y|x)': tf.reduce_mean(logpy_x).numpy(), 
-                    'log q(x|y)': tf.reduce_mean(logqx_y).numpy(), 
-                    'log p(x,z)': tf.reduce_mean(log_pxz).numpy(), 
-                    'log p(z|x)': tf.reduce_mean(log_pz_x).numpy()
+        metrices = {'log p(y|z)': tf.reduce_mean(log_pdec), 
+                    'log q(x|y)': tf.reduce_mean(log_qenc), 
+                    'log p(x,z)': tf.reduce_mean(log_pjoint), 
+                    'log p(z|x)': tf.reduce_mean(log_psmooth)
                    }
-
-        return p_y_x, metrices
-    
-    def forward(self, y_true, mask, training):
-        q_x_y = self.encoder(y_true, training)
-
-        x = q_x_y.sample()
-        x_kf = x
         
-        p_zt_xT = self.kf([x_kf, mask])
-        x_smooth = x_kf
-        if self.config.sample_z:
-            x_mu_smooth, x_cov_smooth = self.kf.kalman_filter.latents_to_observations(p_zt_xT.mean(), p_zt_xT.covariance())
-            p_xt_xT = tfp.distributions.MultivariateNormalTriL(x_mu_smooth, tf.linalg.cholesky(x_cov_smooth))
-            x_smooth = p_xt_xT.sample()
-            '''
-            C = self.kf.kalman_filter.get_observation_matrix_for_timestep
-            Q = self.kf.kalman_filter.get_observation_noise_for_timestep
+        return elbo, loss, metrices, log_pdec, log_qenc, log_pjoint, log_psmooth
+    
+    def call(self, inputs, training):
+        y = inputs[0]
+        mask = inputs[1]
+        q_enc, p_smooth, p_dec, x_sample, z_sample = self.forward(y, mask, training)
+        
+        elbo, loss, log_pdec, metrices, log_qenc, log_pjoint, log_psmooth = self.get_loss(y, 
+                                                                                x_sample,
+                                                                                z_sample,
+                                                                                q_enc,
+                                                                                p_smooth,
+                                                                                p_dec, 
+                                                                                mask = mask,
+                                                                                prior = self.prior)
 
-            x_smooth = list()
-            for n in range(y_true.shape[1]):
-                z = mu_smooth[:,n]
-                z = tf.expand_dims(z,2)
+        return p_dec, metrices
+    
+    def forward(self, y, mask, training):
+        mu, sigma = self.encoder(y, training)
+        q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
 
-                # Output for the current time step
-                x_n = C(n).matmul(z) + Q(n).mean()[...,None]
-                x_n = tf.squeeze(x_n,2)
-                x_smooth.append(x_n)
-
-            x_smooth = tf.stack(x_smooth, 1)
-            '''
-        p_y_x = self.decoder(x, training)
-        return p_y_x, q_x_y, x, x_smooth, p_zt_xT
+        x_sample = q_enc.sample()
+        p_smooth = self.lgssm([x_sample, mask])
+        
+        z_sample = p_smooth.sample()
+        if self.config.dec_input_dim == self.config.dim_x:
+            mu, sigma = self.decoder(x_sample, training)
+            p_dec = self.decoder_dist(tf.concat([mu, sigma], axis=-1))
+        else:
+            mu, sigma = self.decoder(z_sample, training)
+            p_dec = self.decoder_dist(tf.concat([mu, sigma], axis=-1))
+        return q_enc, p_smooth, p_dec, x_sample, z_sample
 
     @tf.function
     def predict(self, inputs):
-        y_true = inputs[0]
-        mask = inputs[1]
-        q_x_y = self.encoder(y_true, False) 
-        x = q_x_y.sample()
+        y_filt_sample, y_pred_sample, y_smooth_sample = self._predict(inputs)
         
+        return [{'name':'filt', 'data': y_filt_sample},
+               {'name':'smooth', 'data': y_smooth_sample}]
+    
+    @tf.function
+    def _predict(self, inputs):
+        y = inputs[0]
+        mask = inputs[1]
+        mu, sigma = self.encoder(y, False)
+        q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
+        
+        x_sample = q_enc.sample()
+                
         #Smooth
-        smooth_dist = self.kf.get_smooth_dist(x, mask)
+        p_smooth, p_obssmooth = self.lgssm.get_smooth_dist(x_sample, mask)
         
         # Filter        
-        filt_dist = self.kf.get_filter_dist(x, mask)       
-         
-        y_hat_filt = self.decoder(filt_dist.sample(), False).sample()
-        y_hat_smooth = self.decoder(smooth_dist.sample(), False).sample()
-        y_hat_vae = self.decoder(x, False).sample()
+        p_filt, p_obsfilt, p_pred, p_obspred = self.lgssm.get_filter_dist(x_sample, mask, True)
+                
+        if self.config.dec_input_dim == self.config.dim_x:
+            filt_sample = p_obsfilt.sample()
+            pred_sample = p_obspred.sample()
+            smooth_sample = p_obssmooth.sample()
+        else: # self.config.dec_input_dim == self.config.dim_z:
+            filt_sample = p_filt.sample()
+            pred_sample = p_pred.sample()
+            smooth_sample = p_smooth.sample()    
         
-        return [{'name':'filt', 'data': y_hat_filt},
-               {'name':'smooth', 'data': y_hat_smooth},
-               {'name':'vae', 'data': y_hat_vae}]
+        mu, sigma = self.decoder(filt_sample, False)
+        p_filt = self.decoder_dist(tf.concat([mu, sigma], axis=-1))
+        
+        mu, sigma = self.decoder(pred_sample, False)
+        p_pred = self.decoder_dist(tf.concat([mu, sigma], axis=-1))
+        
+        mu, sigma = self.decoder(smooth_sample, False)
+        p_smooth = self.decoder_dist(tf.concat([mu, sigma], axis=-1))
+        return p_filt.sample(), p_pred.sample(), p_smooth.sample()
+    
+    @tf.function
+    def _get_filt(self, inputs):
+        y = inputs[0]
+        mask = inputs[1]
+        mu, sigma = self.encoder(y, False)
+        q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
+        
+        x_sample = q_enc.sample()
+        
+        # Filter        
+        p_filt, p_obsfilt = self.lgssm.get_filter_dist(x_sample, mask, get_pred=False)
+                
+        if self.config.dec_input_dim == self.config.dim_x:
+            filt_sample = p_obsfilt.sample()
+        else: # self.config.dec_input_dim == self.config.dim_z:
+            filt_sample = p_filt.sample()
+        
+        mu, sigma = self.decoder(filt_sample, False)
+        p_filt = self.decoder_dist(tf.concat([mu, sigma], axis=-1))
+        
+        return p_filt.sample()
     
     @tf.function
     def get_latents(self, inputs):
-        y_true = inputs[0]
+        y = inputs[0]
         mask = inputs[1]
         
-        q_x_y = self.encoder(y_true, False)
-        x = q_x_y.sample()
+        mu, sigma = self.encoder(y, False)
+        q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
+        x_sample = q_enc.sample()
         
         #Smooth
-        smooth_dist = self.kf.get_smooth_dist(x, mask)
+        p_smooth, p_obssmooth = self.lgssm.get_smooth_dist(x_sample, mask)
         
         # Filter        
-        filt_dist, pred_dist = self.kf.get_filter_dist(x, mask, True)   
+        p_filt, p_obsfilt, p_pred, p_obspred = self.lgssm.get_filter_dist(x_sample, mask, True)   
         
-        return {"smooth_mean": smooth_dist.mean(),
-                "smooth_cov": smooth_dist.covariance(),
-                "filt_mean": filt_dist.mean(),
-                "filt_cov": filt_dist.covariance(),
-                "pred_mean": pred_dist.mean(), 
-                "pred_cov": pred_dist.covariance(),
-                "x": x}
+        return {"smooth_mean": p_obssmooth.mean(),
+                "smooth_cov": p_obssmooth.covariance(),
+                "filt_mean": p_obsfilt.mean(),
+                "filt_cov": p_obsfilt.covariance(),
+                "pred_mean": p_obspred.mean(), 
+                "pred_cov": p_obspred.covariance(),
+                "x": x_sample}
 
     def _print_info(self, inputs):    
         from tabulate import tabulate
-        _ = self.kf([np.zeros((1,self.config.ph_steps,self.config.dim_x), dtype='float32'), np.zeros((1,self.config.ph_steps), dtype='bool')])
+        _ = self.lgssm([
+            np.zeros((self.config.batch_size,self.config.ph_steps,self.config.dim_x), dtype='float32'),
+            np.zeros((self.config.batch_size,self.config.ph_steps), dtype='bool')])
         info = []
-        [info.append([t.name, t.shape, t.trainable]) for t in self.kf.trainable_variables]
-        tqdm.write("Model: {0}".format(self.kf.name))
+        [info.append([t.name, t.shape, t.trainable]) for t in self.lgssm.trainable_variables]
+        tqdm.write("Model: {0}".format(self.lgssm.name))
         tqdm.write(tabulate(info, headers=['Name', 'Shape', 'Trainable']))
 
         super(KVAE, self)._print_info(inputs)
-
-    def sample(self, samples):
-        x_samples = self.kf.kalman_filter.sample(sample_shape=samples)
-        y_hat_sample, _,_ = self.decoder(x_samples, False)
-        return y_hat_sample
-
                                   

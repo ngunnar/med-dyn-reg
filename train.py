@@ -8,71 +8,55 @@ from tqdm import tqdm
 import argparse
 
 from config import get_config
-from src.models import VAE, KVAE
-from src.flow_models import fVAE, fKVAE, bKVAE
+from src.flow_models import fKVAE
 from src.datasetLoader import TensorflowDatasetLoader
 
 def main(dim_y = (112,112),
          dim_x = 16,
          dim_z = 32, 
+         dec_in = 16,
          gpu = '0',
          model_path = None, 
          start_epoch = 1, 
          prefix = None, 
          ds_path = '/data/Niklas/EchoNet-Dynamics', 
          ds_size = None, 
-         K = 1,
-         model_int = None,
          batch_size = 4):
     
     config, config_dict = get_config(ds_path = ds_path,
                                      ds_size = ds_size, 
                                      dim_y = dim_y, 
                                      dim_x = dim_x,
-                                     dim_z = dim_z,
+                                     dim_z = dim_z,                                     
+                                     dec_input_dim = dec_in,
+                                     use_kernel = False,
                                      gpu = gpu, 
                                      start_epoch = start_epoch,
                                      model_path = model_path, 
-                                     K=K,
-                                     batch_size = batch_size)
+                                     init_cov = 1.0,
+                                     enc_filters = [16, 32, 64, 128],
+                                     dec_filters = [16, 32, 64, 128],
+                                     num_epochs = 50,
+                                     batch_size = batch_size,
+                                     plot_epoch = 2)
 
     os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
 
-    output_first_frame = False
-    if model_int == 0:
-        model = VAE(config = config)
-        log_folder = 'vae'
-    elif model_int == 1:
-        model = KVAE(config = config)
-        log_folder = 'kvae'
-    elif model_int == 2:
-        output_first_frame = True
-        model = fVAE(config = config)
-        log_folder = 'fvae'
-    elif model_int == 3:
-        output_first_frame = True
-        model = fKVAE(config = config)
-        log_folder = 'fkvae'
-    elif model_int == 4:
-        output_first_frame = True
-        model = bKVAE(config = config)
-        log_folder = 'bkvae'
-    else:
-        raise NotImplemented
+    model = fKVAE(config = config)
+    log_folder = 'fkvae'    
+    model.info()
     
     train_generator = TensorflowDatasetLoader(root = config.ds_path,
                                               image_shape = config.dim_y, 
                                               length = config.ph_steps, 
                                               period = config.period,
-                                              size = config.ds_size,
-                                              output_first_frame = output_first_frame)
+                                              size = config.ds_size)
     test_generator = TensorflowDatasetLoader(root = config.ds_path,
                                              image_shape = config.dim_y,
                                              length = config.ph_steps,
                                              split='test', 
                                              period = config.period,
-                                             size = config.ds_size,
-                                             output_first_frame = output_first_frame)
+                                             size = config.ds_size)
     len_train = int(len(train_generator.idxs))
     len_test = int(len(test_generator.idxs))
     tqdm.write("Model name {0}".format(model.name))
@@ -113,16 +97,17 @@ def main(dim_y = (112,112),
     plot_test = [p[None,...] for p in plot_test]
 
     loss_sum_train_metric = tf.keras.metrics.Mean()
-
     checkpoint = tf.train.Checkpoint(optimizer=model.opt, model=model)
     for epoch in range(model.epoch, config.num_epochs+1):
         #################### TRANING ##################################################
-        beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
+        #beta = tf.sigmoid((epoch%model.config.kl_cycle - 1)**2/model.config.kl_growth-model.config.kl_growth)
+        beta = tf.sigmoid((epoch-1)**2/model.config.kl_growth-model.config.kl_growth)
         model.w_kl = model.config.kl_latent_loss_weight * beta
         model.w_kf = model.config.kf_loss_weight * beta
         train_log = tqdm(total=len_train//config.batch_size, desc='Train {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
         for i, inputs in enumerate(train_dataset):
             loss, metrices = model.train_step(inputs)
+            metrices = {str(key): value.numpy() for key, value in metrices.items()}
             loss_sum_train_metric(loss)
             train_log.set_postfix(metrices)
             train_log.update(1)
@@ -137,6 +122,7 @@ def main(dim_y = (112,112),
         test_log = tqdm(total=len_test//config.batch_size, desc='Test {0} '.format(epoch), position=0, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}")
         for i, inputs in enumerate(test_dataset):
             loss, metrices = model.test_step(inputs)
+            metrices = {str(key): value.numpy() for key, value in metrices.items()}
             test_log.set_postfix(metrices)
             test_log.update(1)
         test_log.close()
@@ -153,8 +139,7 @@ def main(dim_y = (112,112),
 
         with test_summary_writer.as_default():
             [tf.summary.scalar(l, test_result[l], step=epoch) for l in test_result.keys()]
-        
-        
+          
         if epoch % config.plot_epoch == 0:
             # Prepare the plot
             result_dict = model.get_image_summary(plot_train, plot_test)
@@ -165,17 +150,21 @@ def main(dim_y = (112,112),
             model.save_weights(model_log_dir + '/best_model')
             best_loss = loss_training
             checkpoint.write(file_prefix=checkpoint_prefix)  # overwrite best val model
+        
+        if epoch % 5 == 0:
+            model.save_weights(model_log_dir + '/model_{0}'.format(epoch))
+        
         model.epoch += 1
     model.save_weights(model_log_dir + '/model')
 
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # model
-    parser.add_argument('-model_int','--model_int', type=int, help='Type of model (0=VAE, 1=KVAE, 2=fVAE, 3=fKVAE, 4=bKVAE)', default=None)
     parser.add_argument('-y', '--dim_y', type=tuple, help='dimension of image variable (default (112,112))', default=(112,112))
     parser.add_argument('-x', '--dim_x', type=int, help='dimension of latent variable (default 16)', default=16)
     parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (default 32)', default=32)
-    parser.add_argument('-K', '--K', type=int, help='dimension of K (default 1)', default=1)
+    parser.add_argument('-dec_in', '--dec_in', type=int, help='input dim to decoder (default 16)', default=16)
     parser.add_argument('-saved_model','--saved_model', help='model path if continue running model (default:None)', default=None)
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)
     
@@ -191,12 +180,11 @@ if __name__ == "__main__":
     main(dim_y = args.dim_y,
          dim_x = args.dim_x,
          dim_z = args.dim_z, 
+         dec_in = args.dec_in,
          gpu = args.gpus,
          model_path = args.saved_model, 
          start_epoch = args.start_epoch,
          prefix = args.prefix,
          ds_path = args.ds_path, 
-         ds_size = args.ds_size, 
-         K = args.K,
-         model_int = args.model_int)
+         ds_size = args.ds_size)
     
