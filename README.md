@@ -1,3 +1,5 @@
+# NOTE: THIS DESCRIPTION IS UNDER CONSTRUCTION
+
 # Latent linear dynamics in spatiotemporal medical data
 Official implementation of Latent linear dynamics in spatiotemporal medical data ([Arxiv](https://arxiv.org/abs/2103.00930)).
 
