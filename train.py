@@ -16,6 +16,7 @@ def main(dim_y = (112,112),
          dim_z = 32, 
          dec_in = 16,
          gpu = '0',
+         int_steps = 0,
          model_path = None, 
          start_epoch = 1, 
          prefix = None, 
@@ -30,6 +31,7 @@ def main(dim_y = (112,112),
                                      dim_z = dim_z,                                     
                                      dec_input_dim = dec_in,
                                      use_kernel = False,
+                                     int_steps = int_steps,
                                      gpu = gpu, 
                                      start_epoch = start_epoch,
                                      model_path = model_path, 
@@ -71,6 +73,7 @@ def main(dim_y = (112,112),
     
     # model training
     if config.model_path is not None:
+        tqdm.write("Loading weights {0}".format(config.model_path))
         model.load_weights(config.model_path)
     model.compile(int(len(train_generator.idxs)/config.batch_size))
     model.epoch = config.start_epoch
@@ -165,6 +168,7 @@ if __name__ == "__main__":
     parser.add_argument('-x', '--dim_x', type=int, help='dimension of latent variable (default 16)', default=16)
     parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (default 32)', default=32)
     parser.add_argument('-dec_in', '--dec_in', type=int, help='input dim to decoder (default 16)', default=16)
+    parser.add_argument('-int_steps', '--int_steps', type=int, help='flow integration steps (default 0)', default=0)
     parser.add_argument('-saved_model','--saved_model', help='model path if continue running model (default:None)', default=None)
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)
     
@@ -182,6 +186,7 @@ if __name__ == "__main__":
          dim_z = args.dim_z, 
          dec_in = args.dec_in,
          gpu = args.gpus,
+         int_steps = args.int_steps,
          model_path = args.saved_model, 
          start_epoch = args.start_epoch,
          prefix = args.prefix,

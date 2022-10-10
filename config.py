@@ -14,6 +14,7 @@ def get_config(
     enc_filters = [16, 32, 64, 128],
     dec_filters = [16, 32, 64, 128],
     use_kernel = False,
+    int_steps = 0,
     # LGSSM
     dim_x = 16,
     dim_z = 32,
@@ -29,6 +30,7 @@ def get_config(
     #trainable_sigma = True,
     #sigma_full = False,
     # Training
+    losses = ['kvae_loss', 'grad'],
     gpu = '0',
     num_epochs = 50,
     start_epoch = 1,
@@ -66,6 +68,7 @@ def get_config(
         'dec_filters':dec_filters,
         'dec_input_dim': dec_input_dim,
         'use_kernel': use_kernel,
+        'int_steps': int_steps,
         #'use_subpixel':use_subpixel,
         # LGSSM
         "dim_x": dim_x,
@@ -82,6 +85,7 @@ def get_config(
         #"sigma_full":sigma_full,
         #"K": K,
         # Training
+        "losses": losses,
         "gpu": gpu,
         "num_epochs": num_epochs,
         "start_epoch": start_epoch,
