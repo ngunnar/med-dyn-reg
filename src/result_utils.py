@@ -10,12 +10,41 @@ import tensorflow as tf
 
 from .metrics import batch_jacobian_determinant
 
+
+import os
+import sys
+# getting the name of the directory
+# where the this file is present.
+current = os.path.realpath(sys.path[0])
+ 
+# Getting the parent directory name
+# where the current directory is present.
+parent = os.path.dirname(current)
+ 
+# adding the parent directory to
+# the sys.path.
+sys.path.append(parent)
+ 
+# now we can import the module in the parent
+# directory.
+import config as cf
+ 
+
 def get_config(path):
     print('%s/%s' % (os.path.dirname(path), 'config.json'))
     print(os.path.dirname(path))
-    with open('%s/%s' % (os.path.dirname(path), 'config.json')) as data_file:
-        config_dict = json.load(data_file)
+    _, config_dict = cf.get_config()
     
+    with open('%s/%s' % (os.path.dirname(path), 'config.json')) as data_file:
+        config_dict_base = json.load(data_file)
+    
+    assert np.all([k in config_dict.keys() for k in config_dict_base.keys()]), "Loaded config file includes attributes that are not listed in default file"
+    
+    for k in config_dict:
+        if k in config_dict_base:
+            config_dict[k] = config_dict_base[k] 
+    
+    #config = namedtuple("Config", config_dict.keys())(*config_dict.values())
     config = namedtuple("Config", config_dict.keys())(*config_dict.values())
     return config, config_dict
 

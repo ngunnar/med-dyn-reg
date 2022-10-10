@@ -3,6 +3,7 @@ import numpy as np
 import tensorflow_probability as tfp
 import tensorflow_addons as tfa
 from voxelmorph.tf.layers import SpatialTransformer as SpatialTransformer
+from voxelmorph.tf.layers import VecInt
 
 tfk = tf.keras
 tfpl = tfp.layers
@@ -38,6 +39,9 @@ class fKVAE(KVAE):
         self.warp = tf.keras.layers.Lambda(lambda x: self.warping(x), name='warping')
         external_mask = tf.convert_to_tensor(np.load(config.ds_path + '/external_mask.npy'))
         self.external_mask = tf.repeat(external_mask[...,None], 2, axis=-1)
+        if self.config.int_steps > 0:            
+            self.vecInt = VecInt(method='ss', name='s_flow_int', int_steps=self.config.int_steps)
+        
     
     def warping(self, inputs):
         phi = inputs[0]
@@ -75,19 +79,13 @@ class fKVAE(KVAE):
         
         p_dec, q_enc, p_smooth, p_fdec, x_sample, z_sample = self.forward(y, mask, training)
         
-        elbo, loss, metrices, log_pdec, log_qenc, log_pjoint, log_psmooth = self.get_loss(y,
-                                                                                          x_sample,
-                                                                                          z_sample,
-                                                                                          q_enc,
-                                                                                          p_smooth,
-                                                                                          p_dec, 
-                                                                                          mask = mask,
-                                                                                          prior = self.prior)
+        metrices = self.get_loss(y, x_sample, z_sample, q_enc, p_smooth, p_dec, mask = mask, prior = self.prior)
         
         
         grad = grad_loss('l2', p_fdec.mean())
         self.grad_flow_metric.update_state(grad)
-        self.add_loss(grad)
+        if 'grad' in self.config.losses:
+            self.add_loss(grad)
         metrices['grad']=tf.reduce_mean(grad)
 
         return p_dec, metrices
@@ -95,6 +93,12 @@ class fKVAE(KVAE):
     def forward(self, y, mask, training):
         q_enc, p_smooth, p_fdec, x_sample, z_sample = super().forward(y, mask, training)
         phi_sample = p_fdec.sample() #bs, t, w, h, 2
+        if self.config.int_steps > 0:
+            dim_y = y.shape[2:4]
+            ph_steps = y.shape[1]
+            phi_sample = tf.reshape(phi_sample, (-1, *dim_y, 2))
+            phi_sample= self.vecInt(phi_sample)
+            phi_sample = tf.reshape(phi_sample, (-1, ph_steps, *dim_y, 2))
                
         y_mu = self.warp([phi_sample, y[:,0,...]])
         y_sigma = tf.ones_like(y_mu, dtype='float32') * tfp.math.softplus_inverse(0.01) # softplus is used so a -4.6 approx std 0.01
@@ -114,6 +118,14 @@ class fKVAE(KVAE):
         #          y_0 + tf.random.normal(shape=tf.shape(y_0), mean=0.0, stddev=0.01, dtype=tf.float32)]
         
         phi_filt_sample, phi_pred_sample, phi_smooth_sample = self._predict(inputs)
+        
+        if self.config.int_steps > 0:
+            dim_y = y.shape[2:4]
+            ph_steps = y.shape[1]
+            phi_filt_sample= tf.reshape(self.vecInt(tf.reshape(phi_filt_sample, (-1, *dim_y, 2))), (-1, ph_steps, *dim_y, 2))
+            phi_pred_sample= tf.reshape(self.vecInt(tf.reshape(phi_pred_sample, (-1, *dim_y, 2))), (-1, ph_steps, *dim_y, 2))
+            phi_smooth_sample= tf.reshape(self.vecInt(tf.reshape(phi_smooth_sample, (-1, *dim_y, 2))), (-1, ph_steps, *dim_y, 2))
+        
         
         if use_kernel:
             phi_filt_sample = tf.reshape(phi_filt_sample, (-1, y.shape[2], y.shape[3], 2))
@@ -155,6 +167,10 @@ class fKVAE(KVAE):
         y = inputs[0]
         mask = inputs[1]
         phi_filt_sample = self._get_filt(inputs)
+        
+        if self.config.int_steps > 0:
+            phi_filt_sample= self.vecInt(phi_filt_sample)
+        
         if use_kernel:
             phi_filt_sample = tf.reshape(phi_filt_sample, (-1, y.shape[2], y.shape[3], 2))
             phi_filt_sample = gaussian_filter(phi_filt_sample, 3.0, (5,5), 4)

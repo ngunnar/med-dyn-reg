@@ -79,6 +79,7 @@ class LGSSM(tfk.Model):
         super(LGSSM, self).__init__(name=name, **kwargs)
         self.dim_z = config.dim_z
         self.dim_x = config.dim_x
+        self.config = config
         
         ## Parameters
         A_init = tf.random_normal_initializer()
@@ -131,11 +132,13 @@ class LGSSM(tfk.Model):
         self.observation_noise = tfp.distributions.MultivariateNormalDiag(loc=tf.zeros(config.dim_x, dtype='float32'),
                                                                          scale_diag=self.R) 
         # Trainable
+        
         self.trainable_params = []
         self.trainable_params.append(self.A) if config.trainable_A else None
         self.trainable_params.append(self.C) if config.trainable_C else None
         self.trainable_params.append(self.Q) if config.trainable_Q else None
         self.trainable_params.append(self.R) if config.trainable_R else None
+        
         #self.trainable_params.append(self.mu) if config.trainable_mu else None
         #self.trainable_params.append(self.Sigma) if config.trainable_sigma else None
         
@@ -166,12 +169,14 @@ class LGSSM(tfk.Model):
         mu = self.dense_mu(x)
         sigma = self.dense_scale(x)
         return mu, sigma
-    def LGSSM(self, x_M):
+    def get_LGSSM(self, x_M, steps = None):
+        if steps is None:
+            steps = self.ph_steps
         mu, sigma = self.initial_prior_network(x_M)
         sigma += tf.keras.backend.epsilon()
         
         init_dist = tfp.distributions.MultivariateNormalDiag(loc = mu, scale_diag = sigma)
-        return tfp.distributions.LinearGaussianStateSpaceModel(num_timesteps = self.ph_steps,
+        return tfp.distributions.LinearGaussianStateSpaceModel(num_timesteps = steps,
                                                                transition_matrix = self.A, 
                                                                transition_noise = self.transition_noise, 
                                                                observation_matrix = self.C,
@@ -185,14 +190,31 @@ class LGSSM(tfk.Model):
     def call(self, inputs):
         x = inputs[0]
         mask = inputs[1]
-        model = self.LGSSM(x[:,0,...])
+        model = self.get_LGSSM(x[:,0,...])
         mu_s, P_s = model.posterior_marginals(x, mask = mask)
         p_smooth = tfp.distributions.MultivariateNormalTriL(mu_s, get_cholesky(P_s, inspect.stack()[0][3]))
         
         return p_smooth
     
-    def get_smooth_dist(self, x, mask):
-        model = self.LGSSM(x[:,0,...])
+    def get_obs_distributions(self, x_sample, mask):        
+        steps = x_sample.shape[1]
+        #Smooth
+        p_smooth, p_obssmooth = self.get_smooth_dist(x_sample, mask, steps = steps)
+
+        # Filter        
+        p_filt, p_obsfilt, p_pred, p_obspred = self.get_filter_dist(x_sample, mask, steps = steps, get_pred=True)   
+
+        return {"smooth_mean": p_obssmooth.mean(),
+                "smooth_cov": p_obssmooth.covariance(),
+                "filt_mean": p_obsfilt.mean(),
+                "filt_cov": p_obsfilt.covariance(),
+                "pred_mean": p_obspred.mean(), 
+                "pred_cov": p_obspred.covariance(),
+                "x": x_sample}
+        
+    
+    def get_smooth_dist(self, x, mask, steps = None):
+        model = self.get_LGSSM(x[:,0,...], steps)
         mu, P = model.posterior_marginals(x, mask = mask)
         p_smooth = tfp.distributions.MultivariateNormalTriL(loc=mu,
                                                             scale_tril=get_cholesky(P, inspect.stack()[0][3]))
@@ -201,8 +223,8 @@ class LGSSM(tfk.Model):
                                                                scale_tril=get_cholesky(P, inspect.stack()[0][3]))
         return p_smooth, p_obssmooth
 
-    def get_filter_dist(self, x, mask, get_pred=False):
-        model = self.LGSSM(x[:,0,...])
+    def get_filter_dist(self, x, mask, get_pred=False, steps = None):
+        model = self.get_LGSSM(x[:,0,...], steps)
         _, mu_f, P_f, mu_p, P_p, mu_obsp, P_obsp = model.forward_filter(x, mask=mask)
         # Filt dist
         p_filt = tfp.distributions.MultivariateNormalTriL(mu_f, get_cholesky(P_f, inspect.stack()[0][3]))
@@ -245,7 +267,9 @@ class LGSSM(tfk.Model):
                 
         ## log p(z_t | z_{t-1}) for t = 2,...,T
         # log p(z_t | z_{t-1}) = log N(z_t | Az_{t-1}, Q) = log N(z_t - Az_{t-1}| 0, Q) = log N(z_Az|0, Q)
-        model = self.LGSSM(x_sample[:,0,...])
+        model = self.get_LGSSM(x_sample[:,0,...])
+        log_prob_x = model.log_prob(x_sample)
+        
         A = model.transition_matrix
         transition_noise = model.transition_noise        
         Az_t = tf.matmul(A, tf.expand_dims(z_sample[:,:-1, :], axis=3))[...,0] # Az_1, ..., Az_{T-1}
@@ -272,7 +296,7 @@ class LGSSM(tfk.Model):
         z_1 = z_sample[:, 0, :]
         log_p_1 = model.initial_state_prior.log_prob(z_1)
         
-        return log_prob_z_z1, log_prob_x_z, log_p_1, log_p_smooth
+        return log_prob_z_z1, log_prob_x_z, log_p_1, log_p_smooth, log_prob_x
        
         '''
         # Sample from smoothing distribution

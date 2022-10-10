@@ -1,5 +1,6 @@
 import io
 import numpy as np
+import math
 import cv2
 import matplotlib.pyplot as plt
 import tensorflow as tf
@@ -16,6 +17,13 @@ def plot(data, title, max_i, axs):
 
 def latent_plot(latents):
     x_vae = latents['x']#latents[6]
+    
+    y_max = np.max(x_vae, axis=1)
+    y_min = np.min(x_vae, axis=1)
+    y_diff = y_max - y_min
+       
+    
+    handles = {}
     
     if 'smooth_mean' not in latents:
         dims = x_vae.shape[2]
@@ -35,9 +43,17 @@ def latent_plot(latents):
         std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth[0,...]))
         std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
         std_pred = tf.sqrt(tf.linalg.diag_part(x_covs_filt_pred[0,...]))
-        t = np.arange(std_smooth.shape[0])
-        dims = std_smooth.shape[1]
-        figure, axs = plt.subplots(1,dims, figsize=(6.4*dims, 4.8))
+        #t = np.arange(std_smooth.shape[0])
+        #dims = std_smooth.shape[1]
+        
+        t = np.arange(x_vae.shape[1])
+        dims = x_vae.shape[2]
+
+        k,l = math.ceil(dims/8), min(dims,8)
+        figure, axs = plt.subplots(k,l, figsize=(5*l,5*k), sharey=False,sharex=True)
+                
+        #figure, axs = plt.subplots(2,dims//2, figsize=(6.4*dims, 4.8))
+        axs = axs.flatten()
         for i in range(dims):
             mu_s = x_mu_smooth[0,:,i]
             stf_s = std_smooth[:,i]
@@ -46,13 +62,18 @@ def latent_plot(latents):
             mu_p = x_mu_filt_pred[0,:,i]
             stf_p = std_pred[:,i]
             
-            axs[i].plot(t, x_vae[0,:,i],'--', label='x')
+            axs[i].plot(t, x_vae[0,:,i],'--', label='x')                          
+            
             axs[i].plot(t, mu_s, 'r', label='x(t|T)')
             axs[i].fill_between(t, mu_s-stf_s, mu_s+stf_s, alpha=0.2, color='r')
+              
             axs[i].plot(t, mu_f, 'g', label='x(t|t)')
             axs[i].fill_between(t, mu_f-stf_f, mu_f+stf_f, alpha=0.2, color='g')
+            
             axs[i].plot(t, mu_p, 'y', label='x(t+1|t)')
-            axs[i].fill_between(t, mu_p-stf_p, mu_p+stf_p, alpha=0.2, color='y')
+            axs[i].fill_between(t, mu_p-stf_p, mu_p+stf_p, alpha=0.2, color='y')                
+            
+            axs[i].set_ylim([y_min[0,i] - y_diff[0,i]*0.2, y_max[0,i] + y_diff[0,i]*0.2])
             axs[i].legend(loc="upper left", ncol=1)
                     
     
@@ -144,8 +165,8 @@ def plot_to_image(y, data_arg):
     image = tf.expand_dims(image, 0)
     return image
 
-def plot_A(model):
-    eigenvalues = [e.numpy() for e in tf.linalg.eig(model.lgssm.A)[0]]
+def plot_A(A):
+    eigenvalues = [e.numpy() for e in tf.linalg.eig(A)[0]]
     
     figure, ax = plt.subplots(1,1, figsize=(10,10))
     ax.axis('off')
@@ -156,8 +177,8 @@ def plot_A(model):
     #ax.title.set_text(title)
     return figure, ax
 
-def A_to_image(model):
-    figure, ax = plot_A(model)
+def A_to_image(A):
+    figure, ax = plot_A(A)
     # Save the plot to a PNG in memory.
     buf = io.BytesIO()
     plt.savefig(buf, format='png')

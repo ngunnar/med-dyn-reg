@@ -205,6 +205,16 @@ class TensorflowDatasetLoader():
         #first_frame = self.rescale(first_frame)[0,:,:,0] # (h, w)
         
         return video, mask#, first_frame 
+    
+    def _read_entire_video(self, idx):
+        video = os.path.join(self.folder, "Videos", idx)
+        video = loadvideo(video).astype(np.float32)
+        f, h, w = video.shape
+        mask = np.zeros(f, dtype='bool')
+        
+        video = self.resizing(video[...,None])
+        video = self.rescale(video)[...,0]
+        return video, mask
 
     def generator(self):
         def gen():
@@ -355,6 +365,29 @@ class EvalTensorflowDatasetLoader():
         trace2 = trace2[0,:,:,0] # (h, w)
               
         return video, mask, trace1, trace2, seg_frame
+    
+    def _read_entire_video(self, idx):
+        trace1_index = min(self.frames[idx])
+        video = os.path.join(self.folder, "Videos", idx)
+        video = loadvideo(video).astype(np.float32)
+        f, h, w = video.shape
+        mask = np.zeros(f, dtype='bool')
+        
+        if trace1_index + self.length > f:
+            video = video[trace1_index:, :, :]                
+            mask = mask[trace1_index:]
+            diff = trace1_index + self.length - f
+            video =  np.concatenate([video, np.zeros((diff, *video.shape[1:]))], axis=0)
+            mask = np.concatenate([mask, np.ones((diff), dtype='bool')], axis=0)
+        else:
+            video = video[trace1_index + np.arange(self.length), :, :]
+            mask = mask[trace1_index + np.arange(self.length)]
+            
+        
+        video = self.resizing(video[...,None])
+        video = self.rescale(video)[...,0]
+        return video, mask
+        
 
     
 long_seg = ['0X280B7441A7E287B2.avi', '0X4154F112065C857B.avi', '0X6E5824E76BEB3ECA.avi']

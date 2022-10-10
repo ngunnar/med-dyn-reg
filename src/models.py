@@ -93,12 +93,15 @@ class VAE(tfk.Model):
         mask = inputs[1]
         p_dec, q_enc, x_sample = self.forward(y, mask, traning)
         
-        log_pdec, log_prior, log_qenc = self.get_loss(p_dec, y, q_enc, self.prior, x_sample, mask)
-        elbo = log_pdec + log_prior - log_qenc
-        self.elbo_metric.update_state(elbo)
-        loss = -(self.w_recon * log_pdec + self.w_kl*(log_prior - log_qenc))
-        self.loss_metric.update_state(loss)
-        self.add_loss(loss)
+        #log_pdec, log_prior, log_qenc = self.get_loss(p_dec, y, q_enc, self.prior, x_sample, mask)
+        #elbo = log_pdec + log_prior - log_qenc
+        #self.elbo_metric.update_state(elbo)
+        #loss = -(self.w_recon * log_pdec + self.w_kl*(log_prior - log_qenc))
+        #self.loss_metric.update_state(loss)
+        #self.add_loss(loss)
+        
+        m = self.get_loss(p_dec, y, q_enc, self.prior, x_sample, mask)
+        self.elbo_metric.update_state(m['elbo'])
         
         metrices = {'log p(y|x)':tf.reduce_mean(log_pdec).numpy(), 
                     'log p(x)': tf.reduce_mean(log_prior).numpy(), 
@@ -226,9 +229,11 @@ class KVAE(VAE):
         self.w_kf = self.config.kf_loss_weight
     
     def get_loss(self, y, x_sample, z_sample, q_enc, p_smooth, p_dec, mask, prior):
-        log_pdec, _, log_qenc = super(KVAE, self).get_loss(p_dec, y, q_enc, prior, x_sample, mask)        
+        m = super(KVAE, self).get_loss(p_dec, y, q_enc, prior, x_sample, mask)        
+        log_pdec = m['log_pdec']
+        log_qenc = m['log_qenc']
         
-        log_prob_z_z1, log_prob_x_z, log_pz1, log_psmooth = self.lgssm.get_loss(x_sample, z_sample, p_smooth)
+        log_prob_z_z1, log_prob_x_z, log_pz1, log_psmooth, log_px = self.lgssm.get_loss(x_sample, z_sample, p_smooth)
         
         mask_ones = tf.cast(mask == False, dtype='float32')
         log_prob_z_z1 = tf.multiply(log_prob_z_z1, mask_ones[:,1:])
@@ -248,11 +253,16 @@ class KVAE(VAE):
         #y_pred = p_dec.mean()#*self.external_mask
         #ssd = tf.reduce_sum((tf.reshape(y_pred, shape) - tf.reshape(y, shape))**2, axis=-1)
         #log_pdec_loss = -tf.reduce_sum(tf.multiply(ssd, mask_ones), axis=-1)
-        loss = -(self.w_recon * log_pdec - self.w_kl*log_qenc + self.w_kf * (log_pjoint - log_psmooth))
+        if 'kvae_loss' in self.config.losses:
+            loss = -(self.w_recon * log_pdec - self.w_kl*log_qenc + self.w_kf * (log_pjoint - log_psmooth))
+            self.loss_metric.update_state(loss)
+            self.add_loss(loss)
+        if 'lgssm_ml' in self.config.losses:
+            loss = -tf.reduce_mean(log_px)
+            self.loss_metric.update_state(loss)
+            self.add_loss(loss)
         
-        self.elbo_metric.update_state(elbo)
-        self.loss_metric.update_state(loss)
-        self.add_loss(loss)
+        self.elbo_metric.update_state(elbo)        
         
         metrices = {'log p(y|z)': tf.reduce_mean(log_pdec), 
                     'log q(x|y)': tf.reduce_mean(log_qenc), 
@@ -260,21 +270,14 @@ class KVAE(VAE):
                     'log p(z|x)': tf.reduce_mean(log_psmooth)
                    }
         
-        return elbo, loss, metrices, log_pdec, log_qenc, log_pjoint, log_psmooth
+        return metrices
     
     def call(self, inputs, training):
         y = inputs[0]
         mask = inputs[1]
         q_enc, p_smooth, p_dec, x_sample, z_sample = self.forward(y, mask, training)
         
-        elbo, loss, log_pdec, metrices, log_qenc, log_pjoint, log_psmooth = self.get_loss(y, 
-                                                                                x_sample,
-                                                                                z_sample,
-                                                                                q_enc,
-                                                                                p_smooth,
-                                                                                p_dec, 
-                                                                                mask = mask,
-                                                                                prior = self.prior)
+        metrices = self.get_loss(y, x_sample, z_sample, q_enc, p_smooth, p_dec, mask = mask, prior = self.prior)
 
         return p_dec, metrices
     
@@ -314,7 +317,7 @@ class KVAE(VAE):
         p_smooth, p_obssmooth = self.lgssm.get_smooth_dist(x_sample, mask)
         
         # Filter        
-        p_filt, p_obsfilt, p_pred, p_obspred = self.lgssm.get_filter_dist(x_sample, mask, True)
+        p_filt, p_obsfilt, p_pred, p_obspred = self.lgssm.get_filter_dist(x_sample, mask, get_pred=True)
                 
         if self.config.dec_input_dim == self.config.dim_x:
             filt_sample = p_obsfilt.sample()
@@ -366,19 +369,7 @@ class KVAE(VAE):
         q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
         x_sample = q_enc.sample()
         
-        #Smooth
-        p_smooth, p_obssmooth = self.lgssm.get_smooth_dist(x_sample, mask)
-        
-        # Filter        
-        p_filt, p_obsfilt, p_pred, p_obspred = self.lgssm.get_filter_dist(x_sample, mask, True)   
-        
-        return {"smooth_mean": p_obssmooth.mean(),
-                "smooth_cov": p_obssmooth.covariance(),
-                "filt_mean": p_obsfilt.mean(),
-                "filt_cov": p_obsfilt.covariance(),
-                "pred_mean": p_obspred.mean(), 
-                "pred_cov": p_obspred.covariance(),
-                "x": x_sample}
+        return self.lgssm.get_obs_distributions(x_sample, mask)
 
     def _print_info(self, inputs):    
         from tabulate import tabulate
