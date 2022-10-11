@@ -83,9 +83,20 @@ class VAE(tfk.Model):
         true_imgs = tf.reshape(y, (-1, y.shape[2], y.shape[3], 1))
         ssim = tf.image.ssim(pred_imgs, true_imgs, max_val=tf.reduce_max(true_imgs), filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
         ssim = tf.reshape(ssim, (-1, y.shape[1]))
-        self.ssim_metric.update_state(tf.reduce_mean(ssim, axis=-1))
         
-        return log_pdec, log_prior, log_qenc
+        self.ssim_metric.update_state(tf.reduce_mean(ssim, axis=-1))
+
+        if "vae" in self.config.losses:
+            loss = -(self.w_recon * log_pdec + self.w_kl*(log_prior - log_qenc))
+            self.loss_metric.update_state(loss)
+            self.add_loss(loss)
+
+        metrices = {'log_pdec': log_pdec,
+                    'log_prior': log_prior,
+                    'log_qenc': log_qenc,
+                    'elbo': log_pdec + log_prior - log_qenc
+                   }
+        return metrices
        
 
     def call(self, inputs, traning):
@@ -93,19 +104,12 @@ class VAE(tfk.Model):
         mask = inputs[1]
         p_dec, q_enc, x_sample = self.forward(y, mask, traning)
         
-        #log_pdec, log_prior, log_qenc = self.get_loss(p_dec, y, q_enc, self.prior, x_sample, mask)
-        #elbo = log_pdec + log_prior - log_qenc
-        #self.elbo_metric.update_state(elbo)
-        #loss = -(self.w_recon * log_pdec + self.w_kl*(log_prior - log_qenc))
-        #self.loss_metric.update_state(loss)
-        #self.add_loss(loss)
-        
         m = self.get_loss(p_dec, y, q_enc, self.prior, x_sample, mask)
         self.elbo_metric.update_state(m['elbo'])
         
-        metrices = {'log p(y|x)':tf.reduce_mean(log_pdec).numpy(), 
-                    'log p(x)': tf.reduce_mean(log_prior).numpy(), 
-                    'log q(x|y)': tf.reduce_mean(log_qenc).numpy()
+        metrices = {'log p(y|x)':tf.reduce_mean(m['log_pdec']).numpy(), 
+                    'log p(x)': tf.reduce_mean(m['log_prior']).numpy(), 
+                    'log q(x|y)': tf.reduce_mean(m['log_qenc']).numpy()
                    }
         
         return p_dec, metrices
