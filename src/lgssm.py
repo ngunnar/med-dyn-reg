@@ -9,7 +9,7 @@ tfk = tf.keras
 tfpl = tfp.layers
 
 # tfp.distributions.LinearGaussianStateSpaceModel.posterior_marginals can return non positive covariance matrix (round error?) 
-def get_cholesky(A, name):
+def get_cholesky(A, training):
     """Find the nearest positive-definite matrix to input
 
     A Python/Numpy port of John D'Errico's `nearestSPD` MATLAB code [1], which
@@ -20,7 +20,25 @@ def get_cholesky(A, name):
     [2] N.J. Higham, "Computing a nearest symmetric positive semidefinite
     matrix" (1988): https://doi.org/10.1016/0024-3795(88)90223-6
     """
-
+    L = tfp.experimental.distributions.marginal_fns.retrying_cholesky(A, jitter=None, max_iters=5, name='retrying_cholesky')
+    #if training:
+    #    is_finite = tf.reduce_any(tf.math.is_nan(L[0]))
+    #    check_op = tf.Assert(is_finite, ["get_cholesky failed:", L[0]])
+    
+    
+    '''
+    is_pd, A_cholesky = isPD(A, name)
+    if is_pd:
+        return A_cholesky
+    L = tfp.experimental.distributions.marginal_fns.retrying_cholesky(A, jitter=None, max_iters=5, name='retrying_cholesky')
+    if tf.reduce_any(tf.math.is_nan(L[0])):
+        tqdm.write("{0}, {1}: no further tries.".format(name, "retrying_cholesky"))
+        tf.Assert(False, ["get_cholesky failed"])
+        #tf.debugging.assert_all_finite(L[0], "get_cholesky failed", name="get_cholesky")
+    
+    '''
+    return L[0]
+    '''
     is_pd, A_cholesky = isPD(A)
     if is_pd:
         return A_cholesky
@@ -64,15 +82,17 @@ def get_cholesky(A, name):
         k += 1
 
     return A3
+    '''
 
 
-def isPD(B):
+def isPD(B, name):
     """Returns true when input is positive-definite, via Cholesky"""
-    try:
-        A = tf.linalg.cholesky(B)
-        return True, A
-    except:
-        return False, None
+    S = True
+    A = tf.linalg.cholesky(B)
+    if tf.reduce_any(tf.math.is_nan(A)):
+        S = False
+        tqdm.write("{0}, {1}: {2}".format(name, "Cholesky failed", "trying with retrying_cholesky..."))   
+    return S, A
 
 class LGSSM(tfk.Model):
     def __init__(self, config, name='LGSSM', **kwargs):
@@ -187,12 +207,12 @@ class LGSSM(tfk.Model):
                                                                allow_nan_stats=True,
                                                                name='LinearGaussianStateSpaceModel')
         
-    def call(self, inputs):
+    def call(self, inputs, training):
         x = inputs[0]
         mask = inputs[1]
         model = self.get_LGSSM(x[:,0,...])
         mu_s, P_s = model.posterior_marginals(x, mask = mask)
-        p_smooth = tfp.distributions.MultivariateNormalTriL(mu_s, get_cholesky(P_s, inspect.stack()[0][3]))
+        p_smooth = tfp.distributions.MultivariateNormalTriL(mu_s, get_cholesky(P_s, training))
         
         return p_smooth
     
@@ -213,30 +233,30 @@ class LGSSM(tfk.Model):
                 "x": x_sample}
         
     
-    def get_smooth_dist(self, x, mask, steps = None):
+    def get_smooth_dist(self, x, mask, training=False, steps = None):
         model = self.get_LGSSM(x[:,0,...], steps)
         mu, P = model.posterior_marginals(x, mask = mask)
         p_smooth = tfp.distributions.MultivariateNormalTriL(loc=mu,
-                                                            scale_tril=get_cholesky(P, inspect.stack()[0][3]))
+                                                            scale_tril=get_cholesky(P, training))
         mu, P = model.latents_to_observations(mu, P)
         p_obssmooth = tfp.distributions.MultivariateNormalTriL(loc=mu, 
-                                                               scale_tril=get_cholesky(P, inspect.stack()[0][3]))
+                                                               scale_tril=get_cholesky(P, training))
         return p_smooth, p_obssmooth
 
-    def get_filter_dist(self, x, mask, get_pred=False, steps = None):
+    def get_filter_dist(self, x, mask, training=False, get_pred=False, steps = None):
         model = self.get_LGSSM(x[:,0,...], steps)
         _, mu_f, P_f, mu_p, P_p, mu_obsp, P_obsp = model.forward_filter(x, mask=mask)
         # Filt dist
-        p_filt = tfp.distributions.MultivariateNormalTriL(mu_f, get_cholesky(P_f, inspect.stack()[0][3]))
+        p_filt = tfp.distributions.MultivariateNormalTriL(mu_f, get_cholesky(P_f, training))
         # Obs filt dist
         mu_obsfilt, P_obsfilt = model.latents_to_observations(mu_f, P_f)
-        p_obsfilt = tfp.distributions.MultivariateNormalTriL(mu_obsfilt, get_cholesky(P_obsfilt, inspect.stack()[0][3]))
+        p_obsfilt = tfp.distributions.MultivariateNormalTriL(mu_obsfilt, get_cholesky(P_obsfilt, training))
         
         if get_pred:
             # Pred dist
-            p_pred = tfp.distributions.MultivariateNormalTriL(mu_p, get_cholesky(P_p, inspect.stack()[0][3]))
+            p_pred = tfp.distributions.MultivariateNormalTriL(mu_p, get_cholesky(P_p, training))
             # Obs pred dist
-            p_obspred = tfp.distributions.MultivariateNormalTriL(mu_obsp, get_cholesky(P_obsp, inspect.stack()[0][3]))
+            p_obspred = tfp.distributions.MultivariateNormalTriL(mu_obsp, get_cholesky(P_obsp, training))
         
             return p_filt, p_obsfilt, p_pred, p_obspred
         

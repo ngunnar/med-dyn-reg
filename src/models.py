@@ -290,7 +290,7 @@ class KVAE(VAE):
         q_enc = self.encoder_dist(tf.concat([mu, sigma], axis=-1))
 
         x_sample = q_enc.sample()
-        p_smooth = self.lgssm([x_sample, mask])
+        p_smooth = self.lgssm([x_sample, mask], training=training)
         
         z_sample = p_smooth.sample()
         if self.config.dec_input_dim == self.config.dim_x:
@@ -379,7 +379,7 @@ class KVAE(VAE):
         from tabulate import tabulate
         _ = self.lgssm([
             np.zeros((self.config.batch_size,self.config.ph_steps,self.config.dim_x), dtype='float32'),
-            np.zeros((self.config.batch_size,self.config.ph_steps), dtype='bool')])
+            np.zeros((self.config.batch_size,self.config.ph_steps), dtype='bool')], training=False)
         info = []
         [info.append([t.name, t.shape, t.trainable]) for t in self.lgssm.trainable_variables]
         tqdm.write("Model: {0}".format(self.lgssm.name))
