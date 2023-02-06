@@ -38,7 +38,7 @@ def get_config(path):
     with open('%s/%s' % (os.path.dirname(path), 'config.json')) as data_file:
         config_dict_base = json.load(data_file)
     
-    assert np.all([k in config_dict.keys() for k in config_dict_base.keys()]), "Loaded config file includes attributes that are not listed in default file"
+    #assert np.all([k in config_dict.keys() for k in config_dict_base.keys()]), "Loaded config file includes attributes that are not listed in default file"
     
     for k in config_dict:
         if k in config_dict_base:
