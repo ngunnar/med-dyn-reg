@@ -10,15 +10,14 @@ def get_config(
     ds_size= None,
     #VAE
     activation = 'relu',
+    skip_connection = True,
     filter_size = 3,
     enc_filters = [16, 32, 64, 128],
     dec_filters = [16, 32, 64, 128],
-    use_kernel = False,
     int_steps = 0,
     # LGSSM
     dim_x = 16,
     dim_z = 32,
-    dec_input_dim = 16,
     noise_emission =  0.1, # x noise
     noise_transition =  0.1, # z noise
     init_cov = 1.0, #30.0
@@ -49,7 +48,7 @@ def get_config(
     # Plotting
     plot_epoch = 1
 ):
-    assert dec_input_dim == dim_z or dec_input_dim == dim_x, "dec_input_dim must be {0} or {1}".format(dim_z, dim_x)
+    
     if ds_size is not None and ds_size < batch_size:
         tqdm.write("Changing batch_size from {0} to {1}".format(batch_size, ds_size))
         batch_size = ds_size
@@ -62,12 +61,10 @@ def get_config(
         "ds_path": ds_path,
         "ds_size": ds_size,
         #VAE
-        'activation': activation,
+        'skip_connection': skip_connection,
         'filter_size': filter_size,
         'enc_filters':enc_filters,
         'dec_filters':dec_filters,
-        'dec_input_dim': dec_input_dim,
-        'use_kernel': use_kernel,
         'int_steps': int_steps,
         #'use_subpixel':use_subpixel,
         # LGSSM
