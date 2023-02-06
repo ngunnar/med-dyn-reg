@@ -6,6 +6,7 @@ import numpy as np
 tfkl = tf.keras.layers
 tfk = tf.keras
 tfpl = tfp.layers
+tfd = tfp.distributions
 
 class Cnn_block(tfkl.Layer):
     def __init__(self, 
@@ -86,39 +87,6 @@ class upsample_block(tfkl.Layer):
         out = self.activation(out)
         return out
         
-class Subpixel_CNN(tf.keras.layers.Layer):
-    def __init__(self, 
-                 filters,
-                 factor = 2,
-                 kernel=(3,3),
-                 name='subpixel_cnn', **kwargs):
-        super(Subpixel_CNN, self).__init__(name=name, **kwargs)
-        self.factor = factor
-        self.subpixelCNN = tfkl.Conv2D(filters=filters,
-                                   kernel_size=kernel,
-                                   strides=(1,1),
-                                   padding='same',
-                                   use_bias=True,
-                                   kernel_initializer='glorot_normal',
-                                   bias_initializer='zeros',
-                                   activation=None,
-                                   name = name+'_subpixelCNN')         
-    def subpixel_reshape(x, factor):
-        # input and output shapes
-        bs, ih, iw, ic = x.get_shape().as_list()
-        oh, ow, oc = ih * factor, iw * factor, ic // factor ** 2
-
-        assert ic % factor == 0, "Number of input channels must be divisible by factor"
-
-        intermediateshp = (-1, iw, iw, oc, factor, factor)
-        x = tf.reshape(x, intermediateshp)
-        x = tf.transpose(x, (0, 1, 4, 2, 5, 3))
-        x = tf.reshape(x, (-1, oh, ow, oc))
-        return x
-    def call(self, x, training):
-        x = self.subpixelCNN(x)
-        return Subpixel_CNN.subpixel_reshape(x, self.factor)
-    
 class CnnT_block(tf.keras.layers.Layer):
     def __init__(self, 
                  filters,
@@ -176,7 +144,6 @@ class CnnT_block(tf.keras.layers.Layer):
             return CnnT_block.subpixel_reshape(x, self.factor)
         return x
         
-
 class Fc_block(tfkl.Layer):
     def __init__(self, h, w, c, name='FC_block', **kwargs):
         super(Fc_block, self).__init__(name=name, **kwargs)
@@ -198,7 +165,6 @@ class Encoder(tfk.Model):
         self.dim_x = config.dim_x
         self.dim_y = config.dim_y
         self.filters = config.enc_filters
-        self.activation_fn = config.activation
         
         self.down_blocks = []
         for i in range(len(self.filters)):
@@ -207,9 +173,13 @@ class Encoder(tfk.Model):
         
         self.flatten = tfkl.Flatten(name='{0}_Flatten'.format(self.name))
         
-        self.mu_layer = tfkl.Dense(self.dim_x, name='{0}_Dense_mu'.format(self.name))
-        activation='softplus' # IndependentNormal uses 'softplus' already
-        self.sigma_layer = tfkl.Dense(self.dim_x, activation=activation, name='{0}_Dense_sigma'.format(self.name))
+        self.use_dist = tfpl.IndependentNormal
+        #use_dist = tfpl.MultivariateNormalTriL
+        self.dense = tfkl.Dense(self.use_dist.params_size(self.dim_x), activation=None)
+        
+        activity_regularizer = None
+        
+        self.enc_q = self.use_dist(self.dim_x, activity_regularizer = activity_regularizer, name='encoder_dist')
         
     def call(self, y, training):
         ph_steps = tf.shape(y)[1]
@@ -219,13 +189,11 @@ class Encoder(tfk.Model):
             x = l(x, training)
         
         x = self.flatten(x)
-
-        mu = tf.reshape(self.mu_layer(x), (-1, ph_steps, self.dim_x))
-        sigma = tf.reshape(self.sigma_layer(x), (-1, ph_steps, self.dim_x))
-        # if variance is zero, log_p(x) will be NaN and gradients will be NaN, therefore adding epsilson
-        sigma = tfp.math.softplus_inverse(sigma + tf.keras.backend.epsilon())
-
-        return mu, sigma
+        x = self.dense(x)
+        x = tf.reshape(x, (-1, ph_steps, self.use_dist.params_size(self.dim_x)))
+        q_enc = self.enc_q(x)
+        
+        return q_enc
     
 class Decoder(tfk.Model):
     def __init__(self, config, output_channels, name='Decoder', **kwargs):
@@ -234,9 +202,7 @@ class Decoder(tfk.Model):
         self.dim_y = config.dim_y
         self.dim_x = config.dec_input_dim
         self.filters = config.dec_filters
-                                   
-        activation_y_mu = None #None For Gaussian
-        
+                                           
         h = int(config.dim_y[0] / (2**(len(self.filters))))
         w = int(config.dim_y[1] / (2**(len(self.filters))))
         self.fc_block = Fc_block(h,w,self.filters[-1], name='{0}_FC_block'.format(self.name))
@@ -254,9 +220,14 @@ class Decoder(tfk.Model):
                                    bias_initializer='zeros',
                                    activation=None,
                                    name = name+'_lastCNN')
+        
+        #self.dec_p = tfpl.DistributionLambda(lambda d: tfd.Independent(tfd.Normal(loc = d[0], scale = d[1])))
+        decoder_dist = tfpl.IndependentNormal
+        if output_channels > 1:
+            self.decoder_dist = decoder_dist((*config.dim_y,output_channels), name='decoder_dist')
+        else:
+            self.decoder_dist = decoder_dist(config.dim_y, name='decoder_dist')
 
-        self.mu_activation = tfkl.Activation(activation_y_mu)
-    
     def call(self, inputs, training):
         x = inputs
         
@@ -269,101 +240,10 @@ class Decoder(tfk.Model):
             x = l(x, training)
             i += 1
         
-        y = self.last_cnn(x)
-         
-        y_mu = self.mu_activation(y)           
-        # softplus is used so a large negative number gived #0.01
-        y_sigma = tf.ones_like(y_mu, dtype='float32') * tfp.math.softplus_inverse(0.01) 
-
+        y_mu = self.last_cnn(x)        
+        # softplus is used so a large negative number gives #0.01
         y_mu = tf.reshape(y_mu, (-1, ph_steps, np.prod(self.dim_y)*self.output_channels))
-        y_sigma = tf.reshape(y_sigma, (-1, ph_steps, np.prod(self.dim_y)*self.output_channels))
+        y_sigma = tf.ones_like(y_mu, dtype='float32') * tfp.math.softplus_inverse(0.01)        
 
-        return y_mu, y_sigma
-
-    
-class Bspline(tf.keras.layers.Layer):
-    def __init__(self, config, name='Bspline', **kwargs):
-        super(Bspline,self).__init__(name=name, **kwargs)
-        self.dim_x = config.dim_x
-        self.dim_y = config.dim_y
-        self.dist = tfpl.IndependentNormal((*self.dim_y,2))
-        self.dim = 32
-        self.filters = config.dec_filters
-        self.output_channels = 2
-        
-        y_range = tf.range(start=0, limit=self.dim_y[0])/self.dim_y[0]
-        x_range = tf.range(start=0, limit=self.dim_y[1])/self.dim_y[1]
-        y_grid, x_grid = tf.meshgrid(y_range, x_range, indexing="ij")
-        self.grid = tf.cast(tf.stack((y_grid, x_grid), -1), 'float32')
-        
-        
-        
-        h = int(self.dim / (2**3))
-        w = int(self.dim / (2**3))
-        self.fc_block = Fc_block(h,w,self.filters[-1], name='{0}_FC_block'.format(self.name))
-        self.up_blocks = []
-        for i in reversed(range(3)):
-            self.up_blocks.append(
-                upsample_block(filters = self.filters[i], kernel=config.filter_size, name='{0}_up_block{1}'.format(self.name, i)))
-        
-        self.last_cnn = tfkl.Conv2D(filters=self.output_channels,
-                                   kernel_size=config.filter_size,
-                                   strides=(1,1),
-                                   padding='same',
-                                   use_bias=True,
-                                   kernel_initializer='glorot_normal',
-                                   bias_initializer='zeros',
-                                   activation=None,
-                                   name = name+'_lastCNN')
-        self.interp = tf.keras.layers.Lambda(lambda x: self.interpolation(x))
-        
-    def body(i, d, p, s):
-        d_new = tfa.image.interpolate_bilinear(p[...,i:i+1], s)
-        return (i+1, tf.concat([d,d_new], axis=-1), p, s)
-    
-    def interpolation(self, inputs):
-        parameters = inputs[0]
-        bs = inputs[1]
-        ph_steps = inputs[2]
-        transform_grid = tf.repeat(self.grid[None,...], bs*ph_steps, axis=0)
-        transform_grid = tf.reshape(transform_grid, (bs*ph_steps, -1, self.grid.shape[-1]))
-        
-        scaled_points = transform_grid * (np.array([self.dim, self.dim], dtype='float32') - 1)[None,None,...]
-        
-        cond = lambda i, d, p, s: i < p.shape[-1]
-        i0 = tf.constant(1)
-        _, d,_,_ = tf.while_loop(cond, 
-                          Bspline.body, 
-                          loop_vars=[i0, 
-                                     tfa.image.interpolate_bilinear(parameters[...,0:1], scaled_points), 
-                                     parameters,
-                                     scaled_points],
-                          shape_invariants=[i0.get_shape(), 
-                                            tf.TensorShape([None, np.prod(self.dim_y), None]), #bs 
-                                            parameters.get_shape(), 
-                                            scaled_points.get_shape()])
-        return d
-    
-    def call(self, inputs, training):
-        parameters = inputs
-        bs = tf.shape(parameters)[0]
-        ph_steps = parameters.shape[1]
-        
-        
-        parameters = tf.reshape(parameters, (bs*ph_steps, -1))
-        parameters = self.fc_block(parameters)
-        for l in self.up_blocks:
-            parameters = l(parameters, training)
-        
-        parameters = self.last_cnn(parameters)
-        d = self.interp([parameters, bs, ph_steps])
-        flow = -d*np.asarray(self.dim_y)[None, None,...]
-        flow = tf.reshape(flow, (bs, ph_steps, *self.dim_y, 2))
-        mu = flow
-        sigma = tf.ones_like(mu, dtype='float32') * tfp.math.softplus_inverse(0.01) # softplus is used so a -4.6 approx std 0.01
-
-        mu = tf.reshape(mu, (-1, mu.shape[1], np.prod(mu.shape[2:])))
-        sigma = tf.reshape(sigma, (-1, mu.shape[1], np.prod(mu.shape[2:])))
-        phi_y_x = self.dist(tf.concat([mu, sigma], axis=-1))
-        
-        return phi_y_x
+        p_dec = self.decoder_dist(tf.concat([y_mu, y_sigma], axis=-1))
+        return p_dec

@@ -88,8 +88,7 @@ class TensorflowDatasetLoader():
                  image_shape = (112,112),
                  length = 50,
                  period = 1,
-                 size = None,
-                 output_first_frame = True):
+                 size = None):
         self.idxs = {}
         n = length
         self.period = period
@@ -101,16 +100,10 @@ class TensorflowDatasetLoader():
             if size is not None and len(self.idxs) >= size:
                 break
             
-        if output_first_frame:
-            data = tf.data.Dataset.from_generator(
-            self.flow_generator(),
-            tuple([tf.float32, tf.bool, tf.float32]),
-            tuple([(length, *self.image_shape),(length), (self.image_shape)]))
-        else:    
-            data = tf.data.Dataset.from_generator(
-                self.generator(),
-                tuple([tf.float32, tf.bool]),
-                tuple([(length, *self.image_shape),(length)]))
+        data = tf.data.Dataset.from_generator(
+            self.generator(),
+            output_types = ({"input_video": tf.float32, "input_mask": tf.bool}),
+            output_shapes = ({"input_video": (length, *self.image_shape), "input_mask": (length)}))        
         self.data = data
         self.resizing = tf.keras.layers.experimental.preprocessing.Resizing(self.image_shape[0], self.image_shape[1], interpolation='bilinear')
     
@@ -136,15 +129,6 @@ class TensorflowDatasetLoader():
             for idx in self.idxs:
                 video, mask, _ = self._read_video(idx)
                 if np.any(mask == True):
-                    tqdm.write(idx)           
-                yield tuple([video, mask])
-        return gen
-
-    def flow_generator(self):
-        def gen():
-            for idx in self.idxs:
-                video, mask, first_frame = self._read_video(idx)
-                if np.any(mask == True):
-                    tqdm.write(idx)           
-                yield tuple([video, mask, first_frame])
+                    tqdm.write(idx)                           
+                yield {'input_video': video, 'input_mask': mask}
         return gen

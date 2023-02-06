@@ -104,7 +104,6 @@ class TensorflowDatasetLoader():
                  clips=1,
                  pad=None,
                  size = None):
-                 #output_first_frame = False):
         if root is None:
             root = '/data/Niklas/EchoNet-Dynamics'
         
@@ -136,8 +135,11 @@ class TensorflowDatasetLoader():
                 self.idxs.append(fileName)
         data = tf.data.Dataset.from_generator(
             self.generator(),
-            tuple([tf.float32, tf.bool]),
-            tuple([(self.length, *self.image_shape),(self.length)]))
+            output_types=({"input_video": tf.float32, 
+                           "input_mask": tf.bool}),
+            output_shapes = ({"input_video": (self.length, *self.image_shape),
+                               "input_mask": (self.length)}))
+        
         self.data = data
         self.resizing = tf.keras.layers.experimental.preprocessing.Resizing(self.image_shape[0], self.image_shape[1], interpolation='bilinear')
         self.rescale = tf.keras.layers.experimental.preprocessing.Rescaling(1 / 255., offset=0.0)
@@ -196,15 +198,12 @@ class TensorflowDatasetLoader():
             video = temp[:, :, i:(i + h), j:(j + w)]
         
         video = video[...,None] #(ph_steps, h, w 1)
-        #first_frame = first_frame[None,...,None] #(1, h, w, 1)
         if self.image_shape is not None and self.image_shape != video[0].shape:
             video = self.resizing(video)
-            #first_frame = self.resizing(first_frame)
             
         video = self.rescale(video)[...,0] # (ph_steps, h, w)
-        #first_frame = self.rescale(first_frame)[0,:,:,0] # (h, w)
         
-        return video, mask#, first_frame 
+        return video, mask 
     
     def _read_entire_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
@@ -222,7 +221,7 @@ class TensorflowDatasetLoader():
                 video, mask = self._read_video(idx)
                 if np.any(mask == True):
                     tqdm.write(idx)           
-                yield tuple([video, mask])
+                yield {"input_video": video, "input_mask": mask}
         return gen
 
 import collections
@@ -275,7 +274,7 @@ class EvalTensorflowDatasetLoader():
         
         self.idxs = []
         df = pd.read_csv(self.folder / "FileList.csv")
-        for index, row in df.iterrows():
+        for _, row in df.iterrows():
             fileMode = row['Split'].lower()
             fileName = row['FileName'] + '.avi'
             if split in ["all", fileMode] and os.path.exists(self.folder / "Videos" / fileName):
@@ -290,7 +289,7 @@ class EvalTensorflowDatasetLoader():
         self.frames = collections.defaultdict(list)
         self.trace = collections.defaultdict(_defaultdict_of_lists)
         df_vol = pd.read_csv(self.folder /"VolumeTracings.csv")
-        for index, row in df_vol.iterrows():
+        for _, row in df_vol.iterrows():
             fileName = row['FileName']
             if fileName not in self.idxs:
                 continue
@@ -332,16 +331,6 @@ class EvalTensorflowDatasetLoader():
             video = video[trace1_index + np.arange(self.length), :, :]
             mask = mask[trace1_index + np.arange(self.length)]
         
-        #video = video[np.arange(trace1_index, trace2_index+1, self.period), :, :]
-        #mask = mask[np.arange(trace1_index, trace2_index+1, self.period)]
-        
-        #if self.clips == 1:
-        #    video = video[0]
-        #    mask = mask[0]
-        #else:
-        #    video = np.stack(video)
-        #    mask = np.stack(mask)
-
         if self.pad is not None:
             # Add padding of zeros (mean color of videos)
             # Crop of original size is taken out
