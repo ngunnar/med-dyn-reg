@@ -61,22 +61,18 @@ class VRNN(tfk.Model):
             self.vecInt = VecInt(method='ss', name='s_flow_int', int_steps=self.config.int_steps)
 
         # recurrence function (f_theta) -> Recurrence                
-        self.grus = []
-        for i in range(self.n_layers):
-            self.grus.append(tfkl.GRUCell(units=self.z_dim, use_bias = bias))
-        
-        #self.rnn = tfk.
-        
+        self.grus = [tfkl.GRUCell(units=self.z_dim, use_bias = bias) for _ in range(self.n_layers)]
+                
     def warping(self, inputs):
         phi = inputs[0]
         y_0 = inputs[1]
-        bs, ph_steps, dim_y, _, channels = phi.shape
-        y_0 = tf.repeat(y_0[:,None,...], ph_steps, axis=1)
+        _, length, dim_y, _, _ = phi.shape
+        y_0 = tf.repeat(y_0[:,None,...], length, axis=1)
         images = tf.reshape(y_0, (-1, *(dim_y,dim_y), 1))
 
         flows = tf.reshape(phi, (-1, *(dim_y,dim_y), 2))
         y_pred = self.stn([images, flows])
-        y_pred = tf.reshape(y_pred, (-1, ph_steps, *(dim_y,dim_y)))
+        y_pred = tf.reshape(y_pred, (-1, length, *(dim_y,dim_y)))
         return y_pred
     
     def initialize_z(self, batch_size):
@@ -96,22 +92,22 @@ class VRNN(tfk.Model):
     
     def diff_steps(self, phi_t):
         dim_y = phi_t.shape[2:4]
-        ph_steps = phi_t.shape[1]
+        length = phi_t.shape[1]
         phi_t = tf.reshape(phi_t, (-1, *dim_y, 2))
         phi_t= self.vecInt(phi_t)
-        phi_t = tf.reshape(phi_t, (-1, ph_steps, *dim_y, 2))
+        phi_t = tf.reshape(phi_t, (-1, length, *dim_y, 2))
         return phi_t
     
     def call(self, inputs, training): # p(x_t | z_t)
-        y = inputs['input_video']        
+        y = inputs['input_video'] 
+        y_ref = inputs['input_ref']      
         y_shape = tf.shape(y)
         batch_size = y_shape[0]
         seq_len = y_shape[1]
         features = y_shape[2]  #(bs, seq, *dim_y)
-        ref_y = y[:,0,...]
         
-        # y (bs, ph_steps, h, w)        
-        feat_y_ref, hl_feat_y_ref = self.feat_y(ref_y[:,None,...], training)
+        # y (bs, length, h, w)        
+        feat_y_ref, hl_feat_y_ref = self.feat_y(y_ref[:,None,...], training)
         
         
         loss = tf.TensorArray(dtype=tf.float32, size=0, dynamic_size=True)
@@ -151,7 +147,7 @@ class VRNN(tfk.Model):
             if self.config.int_steps > 0:
                 phi_t = self.diff_steps(phi_t)
 
-            y_mu = self.warp([phi_t, ref_y])
+            y_mu = self.warp([phi_t, y_ref])
             y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:4])))
             y_sigma = self.y_sigma(y_mu)
             pred_dist_t =  self.output_dist(tf.concat([y_mu, y_sigma], axis=-1))  
@@ -194,9 +190,9 @@ class VRNN(tfk.Model):
         self.add_loss(tf.reduce_mean(tf.reduce_sum(loss_grads, axis=1)))
         return samples_img_dist, samples_flow_dist, samples_z_dist
 
-    def generate(self, y, ref_y, mask):
+    def generate(self, y, y_ref, mask):
         training = False
-        feat_y_ref, hl_feat_y_ref = self.feat_y(ref_y[:,None,...], training)
+        feat_y_ref, hl_feat_y_ref = self.feat_y(y_ref[:,None,...], training)
         
         batch_size = tf.shape(y)[0]
         seq_len = tf.shape(y)[1]
@@ -235,7 +231,7 @@ class VRNN(tfk.Model):
             if self.config.int_steps > 0:
                 phi_t = self.diff_steps(phi_t)
 
-            y_mu = self.warp([phi_t, ref_y])
+            y_mu = self.warp([phi_t, y_ref])
             y_mu = tf.reshape(y_mu, (-1, y_mu.shape[1], np.prod(y_mu.shape[2:4])))
             y_sigma = self.y_sigma(y_mu)
             pred_dist_t =  self.output_dist(tf.concat([y_mu, y_sigma], axis=-1))

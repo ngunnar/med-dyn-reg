@@ -31,26 +31,27 @@ class VAE(tfk.Model):
 
     def call(self, inputs, training=None):
         y = inputs['input_video']
+        y_ref = inputs['input_ref']
         mask = inputs['input_mask']   
-        p_dec, q_enc, x_sample = self.forward(y, training)        
+        p_dec, q_enc, x = self.forward(y, y_ref, training)        
         self.set_loss(y, mask, p_dec, q_enc)
-        return p_dec, q_enc, x_sample
+        return p_dec, q_enc, x
     
-    def forward(self, y, training=None):
-        q_enc, x_ref_feat = self.encoder(y, training)        
-        x_sample = q_enc.sample()        
-        p_dec = self.decoder([x_sample, x_ref_feat], training)        
+    def forward(self, y, y_ref, training=None):
+        q_enc, q_ref_enc, x_ref_feat = self.encoder(y, y_ref, training)        
+        x = q_enc.sample()        
+        p_dec = self.decoder([x, x_ref_feat], training)        
         
-        return p_dec, q_enc, x_sample
+        return p_dec, q_enc, x
 
     def set_loss(self, y, mask, p_dec, q_enc):
-        mask_ones = tf.cast(mask == False, dtype='float32') # (bs, ph_steps)    
-        log_p_dec = p_dec.log_prob(y) # (bs, ph_steps)
+        mask_ones = tf.cast(mask == False, dtype='float32') # (bs, length)    
+        log_p_dec = p_dec.log_prob(y) # (bs, length)
         log_p_dec = tf.multiply(log_p_dec, mask_ones) 
         log_p_dec = tf.reduce_sum(log_p_dec, axis=1)
 
         kl = tf.keras.losses.KLDivergence(reduction=tf.keras.losses.Reduction.NONE)
-        kld = kl(q_enc.sample(), self.prior.sample()) #(bs, ph_steps)
+        kld = kl(q_enc.sample(), self.prior.sample()) #(bs, length)
         kld = tf.multiply(kld, mask_ones)
         kld = tf.reduce_sum(kld, axis=1)
 
@@ -71,15 +72,15 @@ class VAE(tfk.Model):
     def eval(self, inputs):
         y = inputs['input_video']
         mask = inputs['input_mask'] 
-        p_dec, q_enc, x_sample = self.forward(y, False)
+        p_dec, q_enc, x = self.forward(y, False)
         y_vae = p_dec.sample()
 
         return {'image_data': {'vae': {'images' : y_vae}},
-                'x_obs': x_sample}
+                'x_obs': x}
 
     def sample(self, y):
-        x_sample = self.prior((tf.shape(y)[0:2]))
-        p_dec = self.decoder(x_sample, training=False)
+        x = self.prior((tf.shape(y)[0:2]))
+        p_dec = self.decoder(x, training=False)
         return p_dec
 
     def compile(self, num_batches, loss=None, metrics=None, loss_weights=None, weighted_metrics=None, run_eagerly=None, steps_per_execution=None, jit_compile=None, **kwargs):

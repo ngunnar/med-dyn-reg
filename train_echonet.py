@@ -45,12 +45,12 @@ def main(dim_y = (112,112),
     # Data
     train_generator = TensorflowDatasetLoader(root = config.ds_path,
                                               image_shape = config.dim_y, 
-                                              length = config.ph_steps, 
+                                              length = config.length, 
                                               period = config.period,
                                               size = config.ds_size)
     test_generator = TensorflowDatasetLoader(root = config.ds_path,
                                              image_shape = config.dim_y,
-                                             length = config.ph_steps,
+                                             length = config.length,
                                              split='test', 
                                              period = config.period,
                                              size = config.ds_size)
@@ -65,10 +65,10 @@ def main(dim_y = (112,112),
     test_dataset = test_dataset.batch(config.batch_size)
 
     plot_train = list(train_generator.data.take(1))[0]
-    plot_train = {'input_video': plot_train['input_video'][None,...], 'input_mask': plot_train['input_mask'][None,...]}
+    plot_train = {'input_video': plot_train['input_video'][None,...],'input_ref': plot_train['input_ref'][None,...], 'input_mask': plot_train['input_mask'][None,...]}
 
     plot_test = list(test_generator.data.take(1))[0]
-    plot_test = {'input_video': plot_test['input_video'][None,...], 'input_mask': plot_test['input_mask'][None,...]}
+    plot_test = {'input_video': plot_test['input_video'][None,...],'input_ref': plot_test['input_ref'][None,...], 'input_mask': plot_test['input_mask'][None,...]}
     
     # Logging and callbacks
     log_folder = 'EchoNet'
@@ -119,18 +119,18 @@ def main(dim_y = (112,112),
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # model
-    parser.add_argument('-y', '--dim_y', type=tuple, help='dimension of image variable (default (112,112))', default=(112,112))
-    parser.add_argument('-x', '--dim_x', type=int, help='dimension of latent variable (default 16)', default=16)
-    parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (default 32)', default=32)
-    parser.add_argument('-int_steps', '--int_steps', type=int, help='flow integration steps (default 0)', default=0)
-    parser.add_argument('-saved_model','--saved_model', help='model path if continue running model (default:None)', default=None)
+    parser.add_argument('-y', '--dim_y', type=tuple, help='dimension of image variable (default %(default))', default=(112,112))
+    parser.add_argument('-x', '--dim_x', type=int, help='dimension of latent variable (default %(default))', default=16)
+    parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (default %(default))', default=32)
+    parser.add_argument('-int_steps', '--int_steps', type=int, help='flow integration steps (default %(default))', default=0)
+    parser.add_argument('-saved_model','--saved_model', help='model path if continue running model (default:%(default))', default=None)
     parser.add_argument('-start_epoch','--start_epoch', type=int, help='start epoch', default=1)
-    parser.add_argument('-skip_connection', '--skip_connection',choices=["False", "True"], help='skip connection (default False)', default="False")
-    parser.add_argument('-gpu','--gpus', help='comma separated list of GPUs (default -1 (CPU))', default='-1')
-    parser.add_argument('-prefix','--prefix', help='predix for log folder (default:None)', default=None)
+    parser.add_argument('-skip_connection', '--skip_connection',choices=["False", "True"], help='skip connection (default %(default))', default="False")
+    parser.add_argument('-gpu','--gpus', help='comma separated list of GPUs (default %(default))', default='-1')
+    parser.add_argument('-prefix','--prefix', help='predix for log folder (default:%(default))', default=None)
     
     # data set
-    parser.add_argument('-ds_path','--ds_path', help='path to dataset (default:/data/Niklas/EchoNet-Dynamics)', default='/data/Niklas/EchoNet-Dynamics')
+    parser.add_argument('-ds_path','--ds_path', help='path to dataset (default:%(default))', default='/data/Niklas/EchoNet-Dynamics')
     parser.add_argument('-ds_size','--ds_size', type=int, help='Size of datasets', default=None)
     
     args = parser.parse_args()

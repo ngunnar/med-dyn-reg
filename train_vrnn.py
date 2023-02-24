@@ -17,7 +17,7 @@ def main(dim_y = (112,112),
          dim_z = 32, 
          gpu = '0',
          int_steps = 0,
-         ph_steps = 50,
+         length = 50,
          model_path = None, 
          start_epoch = 1, 
          prefix = None,
@@ -26,7 +26,7 @@ def main(dim_y = (112,112),
     batch_size = 4
     config, config_dict = get_config(dim_y = dim_y, 
                                      dim_x = dim_x,
-                                     ph_steps = ph_steps,
+                                     length = length,
                                      enc_filters = [16, 32, 64, 128],
                                      dec_filters = [16, 32, 64, 128],
                                      skip_connection = skip_connection,
@@ -39,7 +39,7 @@ def main(dim_y = (112,112),
     
     os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
 
-    dataset_loader = VolunteerDataLoader(config.ph_steps, config.dim_y)
+    dataset_loader = VolunteerDataLoader(config.length, config.dim_y)
     train_dataset = dataset_loader.sag_train
     test_dataset = dataset_loader.sag_test
 
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     parser.add_argument('-y', '--dim_y', type=tuple, help='dimension of image variable (default (112,112))', default=(112,112))
     parser.add_argument('-x', '--dim_x', type=int, help='dimension of latent variable (default 16)', default=16)
     parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (default 32)', default=32)
-    parser.add_argument('-ph_steps','--ph_steps', type=int, help='length of time sequence (default 50)', default = 50)
+    parser.add_argument('-length','--length', type=int, help='length of time sequence (default 50)', default = 50)
     parser.add_argument('-int_steps', '--int_steps', type=int, help='flow integration steps (default 0)', default=0)
     parser.add_argument('-skip_connection', '--skip_connection',choices=["False", "True"], help='skip connection (default False)', default="False")
     parser.add_argument('-saved_model','--saved_model', help='model path if continue running model (default:None)', default=None)
@@ -115,7 +115,7 @@ if __name__ == "__main__":
          gpu = args.gpus,
          int_steps = args.int_steps,
          skip_connection = skip_connection,
-         ph_steps = args.ph_steps,
+         length = args.length,
          model_path = args.saved_model, 
          start_epoch = args.start_epoch,
          prefix = args.prefix)

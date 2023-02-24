@@ -4,7 +4,7 @@ from tqdm import tqdm
 def get_config(
     #DS
     dim_y = (112,112),
-    ph_steps=50,    
+    length=50,    
     period= 1,
     ds_path= '/data/Niklas/EchoNet-Dynamics',
     ds_size= None,
@@ -56,7 +56,7 @@ def get_config(
     config_dict = {
         # DS
         "dim_y":dim_y,
-        "ph_steps":ph_steps,    
+        "length":length,    
         "period": period,
         "ds_path": ds_path,
         "ds_size": ds_size,

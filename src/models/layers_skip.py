@@ -136,11 +136,11 @@ class Encoder(tfk.Model):
         
         self.enc_q = self.use_dist(self.dim_x, activity_regularizer = activity_regularizer, name='encoder_dist')    
              
-    def call(self, y, training):
-        ph_steps = tf.shape(y)[1]              
+    def call(self, y, y_ref, training):
+        length = tf.shape(y)[1]              
         
-        x_seq_down = tf.reshape(y, (-1, *self.dim_y, 1)) #(bs, ph_steps, h, w) -> (bs*ph_steps, h, w, 1)
-        x_ref_down = tf.reshape(y[:,0,...], (-1, *self.dim_y, 1)) #(bs, h, w) -> (bs, h, w, 1)       
+        x_seq_down = tf.reshape(y, (-1, *self.dim_y, 1)) #(bs, length, h, w) -> (bs*length, h, w, 1)
+        x_ref_down = tf.reshape(y_ref, (-1, *self.dim_y, 1)) #(bs, h, w) -> (bs, h, w, 1)       
         
         x_ref_feat = []
         for i in range(len(self.filters)):
@@ -149,24 +149,58 @@ class Encoder(tfk.Model):
             
             # Repeat this to handle merge with sequence in decoder                
             x_ref = x_ref[:,None,...] # (bs, w, h, c) -> (bs, 1, w, h, c)            
-            x_ref = tf.repeat(x_ref, ph_steps, axis=1) # (bs, 1, w, h, c) -> (bs, ph_steps, w, h, c)            
-            #x_ref = tf.reshape(x_ref, (-1, *x_ref.shape[2:])) # (bs, ph_steps, w, h, c) -> (bs*ph_steps, w, h, c)            
+            x_ref = tf.repeat(x_ref, length, axis=1) # (bs, 1, w, h, c) -> (bs, length, w, h, c)     
             
             x_ref_feat.append(x_ref)
         
         x_seq_down = self.flatten(x_seq_down)
         x_seq_down = self.dense(x_seq_down)
-        x_seq_down = tf.reshape(x_seq_down, (-1, ph_steps, self.use_dist.params_size(self.dim_x)))
+        x_seq_down = tf.reshape(x_seq_down, (-1, length, self.use_dist.params_size(self.dim_x)))
         q_enc = self.enc_q(x_seq_down)
+
+        x_ref_down = self.flatten(x_ref_down)
+        x_ref_down = self.dense(x_ref_down)
+        x_ref_down = tf.reshape(x_ref_down, (-1, self.use_dist.params_size(self.dim_x)))
+        q_ref_enc = self.enc_q(x_ref_down)
         
-        return q_enc, x_ref_feat
+        return q_enc, q_ref_enc, x_ref_feat
+
+    @tf.function
+    def simple_encode(self, y):
+        x_down = tf.reshape(y, (-1, *self.dim_y, 1))
+        x_feats = []
+        for i in range(len(self.filters)):
+            x_feat, x_down = self.down_blocks[i](x_down, False)
+            x_feats.append(x_feat[:,None,...])
+        x_down = self.flatten(x_down)
+        x_down = self.dense(x_down)
+        x_down = tf.reshape(x_down, (-1, 1, self.use_dist.params_size(self.dim_x)))
+        q_enc = self.enc_q(x_down)
+        return q_enc, x_feats
+    
+    @tf.function
+    def reference_encode(self, y_ref, length):
+        x_down = tf.reshape(y_ref, (-1, *self.dim_y, 1))
+        x_feats = []
+        for i in range(len(self.filters)):
+            x_feat, x_down = self.down_blocks[i](x_down, False)
+            x_feat = x_feat[:,None,...] # (bs, w, h, c) -> (bs, 1, w, h, c)            
+            x_feat = tf.repeat(x_feat, length, axis=1) # (bs, 1, w, h, c) -> (bs, length, w, h, c)     
+            
+            x_feats.append(x_feat)
+            
+        x_down = self.flatten(x_down)
+        x_down = self.dense(x_down)
+        x_down = tf.reshape(x_down, (-1, self.use_dist.params_size(self.dim_x)))
+        q_enc = self.enc_q(x_down)
+        return q_enc, x_feats
+
     
 class Decoder(tfk.Model):
     def __init__(self, config, output_channels, name='Decoder', **kwargs):
         super(Decoder, self).__init__(name=name, **kwargs)
         self.output_channels = output_channels
         self.dim_y = config.dim_y
-        #self.dim_x = config.dec_input_dim
         self.filters = config.enc_filters
         self.skip_connection= config.skip_connection
                                            
@@ -213,7 +247,7 @@ class Decoder(tfk.Model):
         x_feat = inputs[1]
         x_feat.reverse()
         
-        ph_steps = tf.shape(x)[1]
+        length = tf.shape(x)[1]
         dim_x = tf.shape(x)[-1]
         x = tf.reshape(x, (-1, dim_x)) # (b,s,latent_dim) -> (b*s, latent_dim)
         x = self.fc_block(x)
@@ -223,8 +257,8 @@ class Decoder(tfk.Model):
         y_mu = self.cnn_mean(x)
         y_logsigma = self.cnn_logsigma(x)
         
-        y_mu = tf.reshape(y_mu, (-1, ph_steps, np.prod(self.dim_y)*self.output_channels))
-        y_logsigma = tf.reshape(y_logsigma, (-1, ph_steps, np.prod(self.dim_y)*self.output_channels))        
+        y_mu = tf.reshape(y_mu, (-1, length, np.prod(self.dim_y)*self.output_channels))
+        y_logsigma = tf.reshape(y_logsigma, (-1, length, np.prod(self.dim_y)*self.output_channels))        
         
         p_dec = self.decoder_dist(tf.concat([y_mu, y_logsigma], axis=-1))
         return p_dec

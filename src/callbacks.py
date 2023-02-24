@@ -132,7 +132,7 @@ def latent_plot(latent_dist, x_obs):
             axs[i].plot(t, mu_f, 'g', label='x(t|t)')
             axs[i].fill_between(t, mu_f-stf_f, mu_f+stf_f, alpha=0.2, color='g')
             
-            axs[i].plot(t, mu_p, 'y', label='x(t+1|t)')
+            axs[i].plot(t, mu_p, 'y', label='x(t|t-1)')
             axs[i].fill_between(t, mu_p-stf_p, mu_p+stf_p, alpha=0.2, color='y')                
             
             axs[i].set_ylim([y_min[0,i] - y_diff[0,i]*0.2, y_max[0,i] + y_diff[0,i]*0.2])

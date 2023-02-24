@@ -16,7 +16,7 @@ def main(dim_y = (112,112),
          dim_z = 32, 
          gpu = '0',
          int_steps = 0,
-         ph_steps = 50,
+         length = 50,
          model_path = None, 
          start_epoch = 1, 
          prefix = None,
@@ -29,7 +29,7 @@ def main(dim_y = (112,112),
                                      skip_connection = skip_connection,
                                      losses = losses,
                                      int_steps = int_steps,
-                                     ph_steps = ph_steps,
+                                     length = length,
                                      gpu = gpu, 
                                      start_epoch = start_epoch,
                                      model_path = model_path, 
@@ -44,7 +44,7 @@ def main(dim_y = (112,112),
     os.environ["CUDA_VISIBLE_DEVICES"]=config.gpu
     
     # Data
-    dataset_loader = VolunteerDataLoader(config.ph_steps, config.dim_y)
+    dataset_loader = VolunteerDataLoader(config.length, config.dim_y)
     train_dataset = dataset_loader.sag_train
     test_dataset = dataset_loader.sag_test
     
@@ -53,10 +53,10 @@ def main(dim_y = (112,112),
     
     # Put it before shuffle to get same plot images every time
     plot_train = list(train_dataset.take(1))[0]
-    plot_train = {'input_video': plot_train['input_video'][None,...], 'input_mask': plot_train['input_mask'][None,...]}
+    plot_train = {'input_video': plot_train['input_video'][None,...], 'input_ref': plot_train['input_ref'][None,...], 'input_mask': plot_train['input_mask'][None,...]}
     
     plot_test= list(test_dataset.take(1))[0]
-    plot_test = {'input_video': plot_test['input_video'][None,...], 'input_mask': plot_test['input_mask'][None,...]}
+    plot_test = {'input_video': plot_test['input_video'][None,...], 'input_ref': plot_test['input_ref'][None,...], 'input_mask': plot_test['input_mask'][None,...]}
     
     train_dataset = train_dataset.shuffle(buffer_size=len_train).batch(config.batch_size, drop_remainder=True)
     test_dataset = test_dataset.shuffle(buffer_size=len_test).batch(config.batch_size, drop_remainder=True)
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     parser.add_argument('-y', '--dim_y', type=tuple, help='dimension of image variable (default (112,112))', default=(112,112))
     parser.add_argument('-x', '--dim_x', type=int, help='dimension of latent variable (default 16)', default=16)
     parser.add_argument('-z', '--dim_z', type=int, help='dimension of state space variable (default 32)', default=32)
-    parser.add_argument('-ph_steps','--ph_steps', type=int, help='length of time sequence (default 50)', default = 50)
+    parser.add_argument('-length','--length', type=int, help='length of time sequence (default 50)', default = 50)
     parser.add_argument('-int_steps', '--int_steps', type=int, help='flow integration steps (default 0)', default=0)
     parser.add_argument('-skip_connection', '--skip_connection',choices=["False", "True"], help='skip connection (default False)', default="False")
     parser.add_argument('-ncc', '--ncc',choices=["False", "True"], help='use NCC loss (default False)', default="False")
@@ -143,7 +143,7 @@ if __name__ == "__main__":
          int_steps = args.int_steps,
          skip_connection = skip_connection,
          losses = losses,
-         ph_steps = args.ph_steps,
+         length = args.length,
          model_path = args.saved_model, 
          start_epoch = args.start_epoch,
          prefix = args.prefix)

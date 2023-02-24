@@ -135,10 +135,8 @@ class TensorflowDatasetLoader():
                 self.idxs.append(fileName)
         data = tf.data.Dataset.from_generator(
             self.generator(),
-            output_types=({"input_video": tf.float32, 
-                           "input_mask": tf.bool}),
-            output_shapes = ({"input_video": (self.length, *self.image_shape),
-                               "input_mask": (self.length)}))
+            output_types=({"input_video": tf.float32, "input_ref": tf.float32, "input_mask": tf.bool}),
+            output_shapes = ({"input_video": (self.length, *self.image_shape), "input_ref": self.image_shape, "input_mask": (self.length)}))
         
         self.data = data
         self.resizing = tf.keras.layers.experimental.preprocessing.Resizing(self.image_shape[0], self.image_shape[1], interpolation='bilinear')
@@ -197,18 +195,18 @@ class TensorflowDatasetLoader():
             i, j = np.random.randint(0, 2 * self.pad, 2)
             video = temp[:, :, i:(i + h), j:(j + w)]
         
-        video = video[...,None] #(ph_steps, h, w 1)
+        video = video[...,None] #(length, h, w 1)
         if self.image_shape is not None and self.image_shape != video[0].shape:
             video = self.resizing(video)
             
-        video = self.rescale(video)[...,0] # (ph_steps, h, w)
+        video = self.rescale(video)[...,0] # (length, h, w)
         
         return video, mask 
     
     def _read_entire_video(self, idx):
         video = os.path.join(self.folder, "Videos", idx)
         video = loadvideo(video).astype(np.float32)
-        f, h, w = video.shape
+        f, _, _ = video.shape
         mask = np.zeros(f, dtype='bool')
         
         video = self.resizing(video[...,None])
@@ -221,7 +219,7 @@ class TensorflowDatasetLoader():
                 video, mask = self._read_video(idx)
                 if np.any(mask == True):
                     tqdm.write(idx)           
-                yield {"input_video": video, "input_mask": mask}
+                yield {"input_video": video, 'input_ref': video[0,...], "input_mask": mask}
         return gen
 
 import collections
@@ -341,7 +339,7 @@ class EvalTensorflowDatasetLoader():
             i, j = np.random.randint(0, 2 * self.pad, 2)
             video = temp[:, :, i:(i + h), j:(j + w)]
         
-        video = video[...,None] #(ph_steps, h, w 1)
+        video = video[...,None] #(length, h, w 1)
         trace1 = trace1[None,...,None] #(1, h, w, 1)
         trace2 = trace2[None,...,None] #(1, h, w, 1)
         if self.image_shape is not None and self.image_shape != video[0].shape:
@@ -349,7 +347,7 @@ class EvalTensorflowDatasetLoader():
             trace1 = self.resizing(trace1)
             trace2 = self.resizing(trace2)
             
-        video = self.rescale(video)[...,0] # (ph_steps, h, w)
+        video = self.rescale(video)[...,0] # (length, h, w)
         trace1 = trace1[0,:,:,0] # (h, w)
         trace2 = trace2[0,:,:,0] # (h, w)
               

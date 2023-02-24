@@ -2,7 +2,6 @@ import numpy as np
 import glob
 import os
 import SimpleITK as sitk
-import cv2
 import ntpath
 from tqdm import tqdm
 import tensorflow as tf
