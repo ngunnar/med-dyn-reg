@@ -1,50 +1,49 @@
 import tensorflow as tf
 from voxelmorph.tf.losses import NCC, MSE
-import numpy as np
 
 from .layers_skip import Encoder, Decoder
 from .lgssm import LGSSM
-from .utils import get_log_dist
+from .utils import get_log_dist, set_name
 
 tfk = tf.keras
 
 class KVAE(tfk.Model):
-    def __init__(self, config, name='kvae', **kwargs):
-        super(KVAE, self).__init__(self, name = name, **kwargs)
+    def __init__(self, config, name='kvae', prefix=None, **kwargs):
+        super(KVAE, self).__init__(self, name = set_name(name, prefix), **kwargs)
         self.config = config
-        self.encoder = Encoder(self.config)
-        self.decoder = Decoder(self.config, output_channels = 1)
-        self.lgssm = LGSSM(self.config)
+        self.encoder = Encoder(self.config, prefix=prefix)
+        self.decoder = Decoder(self.config, output_channels = 1, prefix=prefix)
+        self.lgssm = LGSSM(self.config, prefix=prefix)
         
-        self.init_w_kf = tf.Variable(initial_value=config.kf_loss_weight, trainable=False, dtype="float32", name="init_w_kf")
-        self.w_kf = tf.Variable(initial_value=config.kf_loss_weight, trainable=False, dtype="float32", name="w_kf")
+        self.init_w_kf = tf.Variable(initial_value=config.kf_loss_weight, trainable=False, dtype="float32", name=set_name("init_w_kf", prefix))
+        self.w_kf = tf.Variable(initial_value=config.kf_loss_weight, trainable=False, dtype="float32", name=set_name("w_kf", prefix))
 
-        self.init_w_recon = tf.Variable(initial_value=config.scale_reconstruction, trainable=False, dtype="float32", name="init_w_kf")
-        self.w_recon = tf.Variable(initial_value=config.scale_reconstruction, trainable=False, dtype="float32", name="w_kf")
+        self.init_w_recon = tf.Variable(initial_value=config.scale_reconstruction, trainable=False, dtype="float32", name=set_name("init_w_kf", prefix))
+        self.w_recon = tf.Variable(initial_value=config.scale_reconstruction, trainable=False, dtype="float32", name=set_name("w_kf", prefix))
 
-        self.init_w_kl = tf.Variable(initial_value=config.kl_latent_loss_weight, trainable=False, dtype="float32", name="init_w_kf")
-        self.w_kl = tf.Variable(initial_value=config.kl_latent_loss_weight, trainable=False, dtype="float32", name="w_kf")
+        self.init_w_kl = tf.Variable(initial_value=config.kl_latent_loss_weight, trainable=False, dtype="float32", name=set_name("init_w_kf", prefix))
+        self.w_kl = tf.Variable(initial_value=config.kl_latent_loss_weight, trainable=False, dtype="float32", name=set_name("w_kf", prefix))
         
-        #self.loss_metric = tfk.metrics.Mean(name="loss")
+        #self.loss_metric = tfk.metrics.Mean(name=set_name("loss", prefix))
 
-        self.mse_metric = tfk.metrics.Mean(name = 'MSE ↓')
-        self.ncc_metric = tfk.metrics.Mean(name = 'NCC ↑')
-        self.log_pdec_metric = tfk.metrics.Mean(name = 'log p(y[t]|x[t]) ↑')
-        self.log_qenc_metric = tfk.metrics.Mean(name = 'log q(x[t]|y[t]) ↓')     
-        self.log_pzx_metric = tfk.metrics.Mean(name = 'log p(z[t],x[t]) ↑')     
-        self.log_pz_x_metric = tfk.metrics.Mean(name = 'log p(z[t]|x[t]) ↓') 
-        self.log_px_x_metric = tfk.metrics.Mean(name = 'log p(x[t]|x[:t-1]) ↑')
+        self.mse_metric = tfk.metrics.Mean(name = set_name('MSE ↓', prefix))
+        self.ncc_metric = tfk.metrics.Mean(name = set_name('NCC ↑', prefix))
+        self.log_py_metric = tfk.metrics.Mean(name = set_name('log p(y[t]|x[t]) ↑', prefix))
+        self.log_qx_metric = tfk.metrics.Mean(name = set_name('log q(x[t]|y[t]) ↓', prefix))
+        self.log_pzx_metric = tfk.metrics.Mean(name = set_name('log p(z[t],x[t]) ↑', prefix))
+        self.log_pz_x_metric = tfk.metrics.Mean(name = set_name('log p(z[t]|x[t]) ↓', prefix))
+        self.log_px_x_metric = tfk.metrics.Mean(name = set_name('log p(x[t]|x[:t-1]) ↑', prefix))
         
-        self.elbo_metric = tfk.metrics.Mean(name = 'ELBO ↑')
-        self.ssim_metric = tfk.metrics.Mean(name = 'ssim ↑')
+        self.elbo_metric = tfk.metrics.Mean(name = set_name('ELBO ↑', prefix))
+        self.ssim_metric = tfk.metrics.Mean(name = set_name('ssim ↑', prefix))
 
     def call(self, inputs, training=None):
         y = inputs['input_video']
         mask = inputs['input_mask'] 
 
-        q_enc, x, x_ref, log_pred, log_filt, log_p_1, log_smooth, ll, p_dec = self.forward(inputs, training)
+        q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll, p_y = self.forward(inputs, training)
 
-        self.set_loss(y, mask, p_dec, q_enc, x, x_ref, log_pred, log_filt, log_p_1, log_smooth, ll)
+        self.set_loss(y, mask, p_y, q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll)
         #self.loss_metric.update_state(tf.reduce_sum(self.losses))
         return
 
@@ -55,39 +54,39 @@ class KVAE(tfk.Model):
         mask = inputs['input_mask'] # (bs, length)
         length = y.shape[1]
                        
-        q_enc, q_ref_enc, x_ref_feat = self.encoder(y, y_ref, training)  
+        q_x, q_s, s_feat = self.encoder(y, y_ref, training)  
         
-        x = q_enc.sample()
-        x_ref = q_ref_enc.sample()
+        x = q_x.sample()
+        s = q_s.sample()
 
-        p_dec = self.dec(x, x_ref, x_ref_feat, length, training)
+        p_y = self.dec(x, s, s_feat, length, training)
 
-        log_pred, log_filt, log_p_1, log_smooth, ll = self.lgssm([x, x_ref, mask])
+        log_pred, log_filt, log_p_1, log_smooth, ll = self.lgssm([x, mask])
         
-        return q_enc, x, x_ref, log_pred, log_filt, log_p_1, log_smooth, ll, p_dec
+        return q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll, p_y
     
     #@tf.function
-    def dec(self, x, x_ref, x_ref_feat, length, training):
-        return self.decoder([tf.concat([x, tf.repeat(x_ref[:,None,:], length, axis=1)], axis=2), x_ref_feat], training)
+    def dec(self, x, s, s_feat, length, training):
+        return self.decoder([tf.concat([x, tf.repeat(s[:,None,:], length, axis=1)], axis=2), s_feat], training)
 
     #@tf.function
     def sim_metric(self, y_true, y_pred, mask_ones, metric, length):
         val = metric(y_true, y_pred) # (bs*length, *dim_y, 1)        
-        val = tf.reduce_sum(val, axis=np.arange(1, len(val.shape))) # (bs*length)
+        val = tf.reduce_sum(val, axis=tf.range(1, len(val.shape))) # (bs*length)
         val = tf.reshape(val, (-1, length)) # (bs, length)
         val = tf.multiply(val, mask_ones)  # (bs, length)
         return tf.reduce_sum(val, axis=1) # (bs)
 
     #@tf.function
-    def set_loss(self, y, mask, p_dec, q_enc, x, x_ref, log_pred, log_filt, log_p_1, log_smooth, ll):
+    def set_loss(self, y, mask, p_y, q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll):
         length = y.shape[1]
         mask_ones = tf.cast(mask == False, dtype='float32')
 
         # log p(y|x)        
-        log_p_y_x = get_log_dist(p_dec, y, mask_ones)       
+        log_p_y_x = get_log_dist(p_y, y, mask_ones)       
         
         # log q(x|y)       
-        log_q_x_y = get_log_dist(q_enc, x, mask_ones)          
+        log_q_x_y = get_log_dist(q_x, x, mask_ones)          
         
         # log p(x, z)
         log_p_xz = tf.reduce_sum(log_filt, axis=1) + log_p_1 + tf.reduce_sum(log_pred, axis=1)
@@ -97,7 +96,7 @@ class KVAE(tfk.Model):
         
         # Image simularity metrics
         y_true = tf.reshape(y, (-1, *y.shape[-2:], 1)) # (bs*length, *dim_y, 1)
-        y_pred = tf.reshape(p_dec.sample(), (-1, *y.shape[-2:], 1)) # (bs*length, *dim_y, 1)
+        y_pred = tf.reshape(p_y.sample(), (-1, *y.shape[-2:], 1)) # (bs*length, *dim_y, 1)
         
         ncc = self.sim_metric(y_true, y_pred, mask_ones, NCC().ncc, length)
         mse = self.sim_metric(y_true, y_pred, mask_ones, MSE().mse, length)
@@ -131,14 +130,14 @@ class KVAE(tfk.Model):
         
         self.mse_metric.update_state(mse)
         self.ncc_metric.update_state(ncc)
-        self.log_pdec_metric.update_state(log_p_y_x)
-        self.log_qenc_metric.update_state(log_q_x_y)
+        self.log_py_metric.update_state(log_p_y_x)
+        self.log_qx_metric.update_state(log_q_x_y)
         self.log_pzx_metric.update_state(log_p_xz)
         self.log_pz_x_metric.update_state(log_p_z_x)
         self.elbo_metric.update_state(elbo)     
         self.log_px_x_metric.update_state(tf.reduce_sum(ll, axis=1))
 
-        y_pred = p_dec.sample()
+        y_pred = p_y.sample()
         self.ssim_metric.update_state(ssim)
 
     def eval(self, inputs):
@@ -147,31 +146,31 @@ class KVAE(tfk.Model):
         mask = inputs['input_mask'] 
         length = y.shape[1]
 
-        q_enc, q_ref_enc, x_ref_feat = self.encoder(y, y_ref, training=False)        
+        q_x, q_s, s_feat = self.encoder(y, y_ref, training=False)        
         
-        x = q_enc.sample()
-        x_ref = q_ref_enc.sampel()
+        x = q_x.sample()
+        s = q_s.sampel()
         
-        p_dec = self.dec(x, x_ref, x_ref_feat, length, False)     
+        p_dec = self.dec(x, s, s_feat, length, False)     
 
-        latent_dist = self.lgssm.get_distribtions(x, x_ref, mask)
-        p_dec_smooth = self.dec(latent_dist['smooth'].sample(), x_ref, x_ref_feat, length, False)
-        p_dec_filt = self.dec(latent_dist['filt'].sample(), x_ref, x_ref_feat, length, False)
-        p_dec_pred = self.dec(latent_dist['pred'].sample(), x_ref, x_ref_feat, length, False)    
+        p_obssmooth, p_obsfilt, p_obspred = self.lgssm.get_distribtions(x, mask)
+        p_y_smooth = self.dec(p_obssmooth.sample(), s, s_feat, length, False)
+        p_y_filt = self.dec(p_obsfilt.sample(), s, s_feat, length, False)
+        p_y_pred = self.dec(p_obspred.sample(), s, s_feat, length, False)    
 
         y_vae = p_dec.sample()
-        y_smooth = p_dec_smooth.sample()
-        y_filt = p_dec_filt.sample()
-        y_pred = p_dec_pred.sample()
+        y_smooth = p_y_smooth.sample()
+        y_filt = p_y_filt.sample()
+        y_pred = p_y_pred.sample()
 
         return {'image_data': {'vae': {'images' : y_vae},
                         'smooth': {'images': y_smooth},
                         'filt': {'images': y_filt},
                         'pred': {'images': y_pred}},
-                'latent_dist': latent_dist,
+                'latent_dist': {'smooth': p_obssmooth, 'filt': p_obsfilt, 'pred': p_obspred},
                 'x_obs': x,
-                'x_ref': x_ref,
-                'x_ref_feat': x_ref_feat}
+                's': s,
+                's_feat': s_feat}
 
 
     def compile(self, num_batches, loss=None, metrics=None, loss_weights=None, weighted_metrics=None, run_eagerly=None, steps_per_execution=None, jit_compile=None, **kwargs):
@@ -195,6 +194,6 @@ class KVAE(tfk.Model):
         # Update weights
         self.optimizer.apply_gradients(zip(gradients, trainable_vars))        
 
-        out = {self.loss_metric.name: self.loss_metric.result()}
-        out.update({m.name: m.result() for m in self.metrics})    
+        #out = {self.loss_metric.name: self.loss_metric.result()}
+        #out.update({m.name: m.result() for m in self.metrics})    
         return {m.name: m.result() for m in self.metrics}

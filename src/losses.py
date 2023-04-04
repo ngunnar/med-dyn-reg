@@ -1,6 +1,5 @@
 import tensorflow as tf
-import numpy as np
-import tensorflow_probability as tfp
+import tensorflow.experimental.numpy as tnp
 import tensorflow.keras.backend as K
 
 def _diffs(y):
@@ -37,7 +36,7 @@ def grad_loss(penalty, y_pred):
     if penalty == 'l1':
         dif = [tf.abs(f) for f in difs]
     else:
-        assert penalty == 'l2', 'penalty can only be l1 or l2. Got: %s' % self.penalty
+        assert penalty == 'l2', 'penalty can only be l1 or l2. Got: %s' % penalty
         dif = [f * f for f in difs]
 
     df = [tf.reduce_sum(K.batch_flatten(f), axis=-1) for f in dif]
@@ -102,7 +101,6 @@ class Grad:
 
         return grad
 
-import tensorflow.keras.backend as K
 class NCC:
     """
     Local (over window) normalized cross correlation loss.
@@ -149,7 +147,7 @@ class NCC:
         IJ_sum = conv_fn(IJ, sum_filt, strides, padding)
 
         # compute cross correlation
-        win_size = np.prod(self.win) * in_ch
+        win_size = tnp.prod(self.win) * in_ch
         u_I = I_sum / win_size
         u_J = J_sum / win_size
 

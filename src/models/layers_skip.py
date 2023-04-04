@@ -1,21 +1,22 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-import numpy as np
+from .utils import set_name
+
 tfkl = tf.keras.layers
 tfk = tf.keras
 tfpl = tfp.layers
 tfd = tfp.distributions
 
 class Fc_block(tfkl.Layer):
-    def __init__(self, h, w, c, name='FC_block', **kwargs):
-        super(Fc_block, self).__init__(name=name, **kwargs)
+    def __init__(self, h, w, c, name='FC_block', prefix=None, **kwargs):
+        super(Fc_block, self).__init__(name=set_name(name, prefix), **kwargs)
         self.dense = tfkl.Dense(h*w*c, 
                                 use_bias=True,
                                 kernel_initializer='glorot_uniform',
                                 bias_initializer='zeros',
-                                name = name + '_dense')
-        self.reshape =  tfkl.Reshape((h,w,c), name=name + '_reshape')
+                                name = set_name(name + '_dense', prefix))
+        self.reshape =  tfkl.Reshape((h,w,c), name=set_name(name + '_reshape'))
         
     def call(self, x):
         x = self.dense(x)
@@ -24,13 +25,13 @@ class Fc_block(tfkl.Layer):
 
     
 class LK_encoder(tfkl.Layer):
-    def __init__(self, filters, kernel, name, **kwargs):
-        super(LK_encoder, self).__init__(name=name, **kwargs)
+    def __init__(self, filters, kernel, name, prefix=None, **kwargs):
+        super(LK_encoder, self).__init__(name=set_name(name, prefix), **kwargs)
         self.cnn = tfkl.Conv2D(filters=filters,
                                kernel_size=kernel, 
                                padding='same', 
                                kernel_initializer='glorot_normal')
-        self.batch_norm = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = name + '_bn')
+        self.batch_norm = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = set_name(name + '_bn', prefix))
         
     def call(self, x, training):
         x = self.cnn(x)
@@ -38,34 +39,34 @@ class LK_encoder(tfkl.Layer):
         return x
 
 class EncoderMiniBlock(tfkl.Layer):
-    def __init__(self, filters, kernel=(3,3), name='down_block', dropout_prob=0.0, **kwargs):
-        super(EncoderMiniBlock, self).__init__(name=name, **kwargs)
+    def __init__(self, filters, kernel=(3,3), name='down_block', prefix=None, dropout_prob=0.0, **kwargs):
+        super(EncoderMiniBlock, self).__init__(name=set_name(name, prefix), **kwargs)
         self.conv1 = tfkl.Conv2D(filters=filters,
                                  kernel_size=kernel,
-                                 activation=tfkl.LeakyReLU(0.2, name = name + '_leakyRelu'),
+                                 activation=tfkl.LeakyReLU(0.2, name = set_name(name + '_leakyRelu', prefix)),
                                  padding='same',
                                  kernel_initializer='glorot_normal')
         
         # LK
         self.regular_kernel = LK_encoder(filters=filters, 
                                           kernel=kernel, 
-                                          name = name + '_regular_kernel')
+                                          name = set_name(name + '_regular_kernel', prefix))
         self.large_kernel = LK_encoder(filters=filters, 
                                           kernel=(5,5), 
-                                          name = name + '_large_kernel')
+                                          name = set_name(name + '_large_kernel', prefix))
         self.one_kernel = LK_encoder(filters=filters, 
                                           kernel=(1,1), 
-                                          name = name + '_one_kernel')
+                                          name = set_name(name + '_one_kernel', prefix))
         
-        self.activation_fn = tfkl.LeakyReLU(0.2, name = name + '_leakyRelu')
+        self.activation_fn = tfkl.LeakyReLU(0.2, name = set_name(name + '_leakyRelu', prefix))
         
-        self.batch_normalization = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = name + '_bn')
+        self.batch_normalization = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = set_name(name + '_bn', prefix))
         
         self.drop_out = tf.keras.layers.Dropout(dropout_prob)
         self.down_cnn = tfkl.Conv2D(filters = filters, 
                                     kernel_size=kernel, 
                                     strides = (2,2), 
-                                    activation=tfkl.LeakyReLU(0.2, name = name + '_leakyRelu_down'), 
+                                    activation=tfkl.LeakyReLU(0.2, name = set_name(name + '_leakyRelu_down', prefix)), 
                                     padding='same', 
                                     kernel_initializer='glorot_normal')
 
@@ -84,20 +85,20 @@ class EncoderMiniBlock(tfkl.Layer):
         return x, down_x
 
 class DecoderMiniBlock(tfkl.Layer):
-    def __init__(self, skip_connection, filters, kernel=(3,3), name='up_block', dropout_prob=0.0, **kwargs):
-        super(DecoderMiniBlock, self).__init__(name=name, **kwargs)
+    def __init__(self, skip_connection, filters, kernel=(3,3), name='up_block', prefix=None, dropout_prob=0.0, **kwargs):
+        super(DecoderMiniBlock, self).__init__(name=set_name(name, prefix), **kwargs)
         self.skip_connection = skip_connection
         self.up_cnnT = tfkl.Conv2DTranspose(filters=filters, kernel_size=kernel, strides = (2,2), activation='relu', padding='same', kernel_initializer='HeNormal')
         self.conv1 = tfkl.Conv2D(filters=filters, 
                                  kernel_size=kernel, 
-                                 activation=tfkl.LeakyReLU(0.2, name = name + '_leakyRelu'), 
+                                 activation=tfkl.LeakyReLU(0.2, name = set_name(name + '_leakyRelu1', prefix)), 
                                  padding='same', kernel_initializer='glorot_normal')
         self.conv2 = tfkl.Conv2D(filters=filters, 
                                  kernel_size=kernel, 
-                                 activation=tfkl.LeakyReLU(0.2, name = name + '_leakyRelu'),
+                                 activation=tfkl.LeakyReLU(0.2, name = set_name(name + '_leakyRelu2', prefix)),
                                  padding='same', kernel_initializer='glorot_normal')
         
-        self.batch_normalization = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = name + '_bn')
+        self.batch_normalization = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = set_name(name + '_bn', prefix))
         self.drop_out = tf.keras.layers.Dropout(dropout_prob)
         
     def call(self, x, training):
@@ -116,8 +117,8 @@ class DecoderMiniBlock(tfkl.Layer):
         return x
 
 class Encoder(tfk.Model):
-    def __init__(self, config, name="Encoder", **kwargs):
-        super(Encoder, self).__init__(name=name, **kwargs)
+    def __init__(self, config, name="Encoder", prefix=None, **kwargs):
+        super(Encoder, self).__init__(name=set_name(name, prefix), **kwargs)
         self.dim_x = config.dim_x
         self.dim_y = config.dim_y
         self.filters = config.enc_filters        
@@ -125,16 +126,16 @@ class Encoder(tfk.Model):
         self.down_blocks = []
         for i in range(len(self.filters)):
             self.down_blocks.append(
-                EncoderMiniBlock(filters=self.filters[i], kernel=config.filter_size, name='{0}_down_block_{1}'.format(self.name, i)))
+                EncoderMiniBlock(filters=self.filters[i], kernel=config.filter_size, name=set_name('{0}_down_block_{1}'.format(self.name, i), prefix)))
         
-        self.flatten = tfkl.Flatten(name='{0}_Flatten'.format(self.name))
+        self.flatten = tfkl.Flatten(name=set_name('{0}_Flatten'.format(self.name), prefix))
         
         self.use_dist = tfpl.IndependentNormal        
         self.dense = tfkl.Dense(self.use_dist.params_size(self.dim_x), activation=None)
         
         activity_regularizer = None
         
-        self.enc_q = self.use_dist(self.dim_x, activity_regularizer = activity_regularizer, name='encoder_dist')    
+        self.enc_q = self.use_dist(self.dim_x, activity_regularizer = activity_regularizer, name=set_name('encoder_dist', prefix)) 
              
     def call(self, y, y_ref, training):
         length = tf.shape(y)[1]              
@@ -197,8 +198,8 @@ class Encoder(tfk.Model):
 
     
 class Decoder(tfk.Model):
-    def __init__(self, config, output_channels, name='Decoder', **kwargs):
-        super(Decoder, self).__init__(name=name, **kwargs)
+    def __init__(self, config, output_channels, name='Decoder', prefix=None, **kwargs):
+        super(Decoder, self).__init__(name=set_name(name, prefix), **kwargs)
         self.output_channels = output_channels
         self.dim_y = config.dim_y
         self.filters = config.enc_filters
@@ -206,14 +207,14 @@ class Decoder(tfk.Model):
                                            
         h = int(config.dim_y[0] / (2**(len(self.filters))))
         w = int(config.dim_y[1] / (2**(len(self.filters))))
-        self.fc_block = Fc_block(h,w,self.filters[-1], name='{0}_FC_block'.format(self.name))
+        self.fc_block = Fc_block(h,w,self.filters[-1], name=set_name('{0}_FC_block'.format(self.name), prefix))
         self.up_blocks = []
         for i in reversed(range(len(self.filters))):
             self.up_blocks.append(
                 DecoderMiniBlock(skip_connection = self.skip_connection, 
                                  filters = self.filters[i], 
                                  kernel=config.filter_size, 
-                                 name='{0}_up_block{1}'.format(self.name, i)))
+                                 name=set_name('{0}_up_block{1}'.format(self.name, i), prefix)))
         
         self.cnn_mean = tfkl.Conv2D(filters=self.output_channels,
                                    kernel_size=config.filter_size,
@@ -223,7 +224,7 @@ class Decoder(tfk.Model):
                                    kernel_initializer='glorot_normal',
                                    bias_initializer='zeros',
                                    activation=None, #TODO: add tanh or softsign as activation
-                                   name = name+'_lastCNN')
+                                   name = set_name(name+'_lastCNN', prefix))
         
         self.cnn_logsigma = tf.keras.layers.Conv2D(filters=self.output_channels,
                                                    kernel_size=config.filter_size, 
@@ -236,11 +237,11 @@ class Decoder(tfk.Model):
         if output_channels > 1:
             self.decoder_dist = decoder_dist((*config.dim_y,output_channels), 
                                              convert_to_tensor_fn=tfd.Distribution.sample,
-                                             name='decoder_dist')
+                                             name=set_name('decoder_dist', prefix))
         else:
             self.decoder_dist = decoder_dist(config.dim_y, 
                                              convert_to_tensor_fn=tfd.Distribution.sample,
-                                             name='decoder_dist')
+                                             name=set_name('decoder_dist', prefix))
 
     def call(self, inputs, training):
         x = inputs[0]
@@ -257,8 +258,9 @@ class Decoder(tfk.Model):
         y_mu = self.cnn_mean(x)
         y_logsigma = self.cnn_logsigma(x)
         
-        y_mu = tf.reshape(y_mu, (-1, length, np.prod(self.dim_y)*self.output_channels))
-        y_logsigma = tf.reshape(y_logsigma, (-1, length, np.prod(self.dim_y)*self.output_channels))        
+        last_channel = self.dim_y[0] * self.dim_y[1] * self.output_channels
+        y_mu = tf.reshape(y_mu, (-1, length, last_channel))
+        y_logsigma = tf.reshape(y_logsigma, (-1, length, last_channel))   
         
         p_dec = self.decoder_dist(tf.concat([y_mu, y_logsigma], axis=-1))
         return p_dec

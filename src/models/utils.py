@@ -14,3 +14,6 @@ def ssim_calculation(y, y_pred):
     ssim = tf.image.ssim(pred_imgs, true_imgs, max_val=tf.reduce_max(true_imgs), filter_size=11, filter_sigma=1.5, k1=0.01, k2=0.03)
     ssim = tf.reshape(ssim, (-1, y.shape[1]))
     return ssim
+
+def set_name(name, prefix=None):
+    return '_'.join(filter(None, (name, prefix)))

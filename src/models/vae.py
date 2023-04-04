@@ -1,9 +1,8 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
-from tqdm import tqdm
 
 from .layers_skip import Encoder, Decoder
-from .utils import ssim_calculation
+from .utils import ssim_calculation, set_name
 
 tfd = tfp.distributions
 tfk = tf.keras
@@ -13,75 +12,76 @@ class VAE(tfk.Model):
     def __init__(self, 
                  config,
                  name="vae",
+                 prefix=None,
                  **kwargs):
-        super(VAE, self).__init__(name=name, **kwargs)
+        super(VAE, self).__init__(name=set_name(name, prefix), **kwargs)
         self.config = config
         
-        self.encoder = Encoder(self.config)
-        self.decoder = Decoder(self.config, output_channels = 1)
+        self.encoder = Encoder(self.config, prefix=prefix)
+        self.decoder = Decoder(self.config, output_channels = 1, prefix=prefix)
 
         self.prior = tfd.Independent(tfd.Normal(loc=tf.zeros(self.config.dim_x), scale=1.), 
                                 reinterpreted_batch_ndims=1)
 
-        self.loss_metric = tfk.metrics.Mean(name="loss")
-        self.log_pdec_metric = tfk.metrics.Mean(name = 'log p(y|x) ↑')        
-        self.kld_metric = tfk.metrics.Mean(name = 'KLD ↓')
-        self.elbo_metric = tfk.metrics.Mean(name = 'ELBO ↑')
-        self.ssim_metric = tfk.metrics.Mean(name = 'ssim ↑')
+        self.loss_metric = tfk.metrics.Mean(name=set_name("loss", prefix))
+        self.log_py_metric = tfk.metrics.Mean(name = set_name('log p(y|x) ↑', prefix))
+        self.kld_metric = tfk.metrics.Mean(name = set_name('KLD ↓', prefix))
+        self.elbo_metric = tfk.metrics.Mean(name = set_name('ELBO ↑', prefix))
+        self.ssim_metric = tfk.metrics.Mean(name = set_name('ssim ↑', prefix))
 
     def call(self, inputs, training=None):
         y = inputs['input_video']
         y_ref = inputs['input_ref']
         mask = inputs['input_mask']   
-        p_dec, q_enc, x = self.forward(y, y_ref, training)        
-        self.set_loss(y, mask, p_dec, q_enc)
-        return p_dec, q_enc, x
+        p_y, q_x, x = self.forward(y, y_ref, training)        
+        self.set_loss(y, mask, p_y, q_x)
+        return p_y, q_x, x
     
     def forward(self, y, y_ref, training=None):
-        q_enc, q_ref_enc, x_ref_feat = self.encoder(y, y_ref, training)        
-        x = q_enc.sample()        
-        p_dec = self.decoder([x, x_ref_feat], training)        
+        q_x, q_s, s_feat = self.encoder(y, y_ref, training)        
+        x = q_x.sample()        
+        p_y = self.decoder([x, s_feat], training)        
         
-        return p_dec, q_enc, x
+        return p_y, q_x, x
 
-    def set_loss(self, y, mask, p_dec, q_enc):
+    def set_loss(self, y, mask, p_y, q_x):
         mask_ones = tf.cast(mask == False, dtype='float32') # (bs, length)    
-        log_p_dec = p_dec.log_prob(y) # (bs, length)
-        log_p_dec = tf.multiply(log_p_dec, mask_ones) 
-        log_p_dec = tf.reduce_sum(log_p_dec, axis=1)
+        log_p_y = p_y.log_prob(y) # (bs, length)
+        log_p_y = tf.multiply(log_p_y, mask_ones) 
+        log_p_y = tf.reduce_sum(log_p_y, axis=1)
 
         kl = tf.keras.losses.KLDivergence(reduction=tf.keras.losses.Reduction.NONE)
-        kld = kl(q_enc.sample(), self.prior.sample()) #(bs, length)
+        kld = kl(q_x.sample(), self.prior.sample()) #(bs, length)
         kld = tf.multiply(kld, mask_ones)
         kld = tf.reduce_sum(kld, axis=1)
 
-        elbo = log_p_dec - kld
-        loss = -log_p_dec + kld
+        elbo = log_p_y - kld
+        loss = -log_p_y + kld
         
         # LOSS
         self.add_loss(loss) # on batch level
 
         # METRICES
-        self.log_pdec_metric.update_state(log_p_dec)
+        self.log_py_metric.update_state(log_p_y)
         self.kld_metric.update_state(kld)
         self.elbo_metric.update_state(elbo)
         
-        y_pred = p_dec.sample()
+        y_pred = log_p_y.sample()
         self.ssim_metric.update_state(ssim_calculation(y, y_pred))
 
     def eval(self, inputs):
         y = inputs['input_video']
         mask = inputs['input_mask'] 
-        p_dec, q_enc, x = self.forward(y, False)
-        y_vae = p_dec.sample()
+        p_y, q_x, x = self.forward(y, False)
+        y_vae = p_y.sample()
 
         return {'image_data': {'vae': {'images' : y_vae}},
                 'x_obs': x}
 
     def sample(self, y):
         x = self.prior((tf.shape(y)[0:2]))
-        p_dec = self.decoder(x, training=False)
-        return p_dec
+        p_y = self.decoder(x, training=False)
+        return p_y
 
     def compile(self, num_batches, loss=None, metrics=None, loss_weights=None, weighted_metrics=None, run_eagerly=None, steps_per_execution=None, jit_compile=None, **kwargs):
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(self.config.init_lr, 

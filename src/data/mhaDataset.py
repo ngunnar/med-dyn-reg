@@ -4,6 +4,7 @@ import numpy as np
 
 from .data_utils import get_tf_data
 
+
 class MhaLoader:
     @staticmethod
     def get_files(directory):
