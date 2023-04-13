@@ -55,6 +55,9 @@ def main(dim_y = (112,112),
                                              period = config.period,
                                              size = config.ds_size)
 
+    plot_train = list(train_generator.data.batch(1).take(1))[0]
+    plot_test = list(test_generator.data.batch(1).take(1))[0]
+
     len_train = int(len(train_generator.idxs))
     num_batches = (len(train_generator.idxs)/config.batch_size)
 
@@ -64,11 +67,7 @@ def main(dim_y = (112,112),
     test_dataset = test_generator.data
     test_dataset = test_dataset.batch(config.batch_size)
 
-    plot_train = list(train_generator.data.take(1))[0]
-    plot_train = {'input_video': plot_train['input_video'][None,...],'input_ref': plot_train['input_ref'][None,...], 'input_mask': plot_train['input_mask'][None,...]}
-
-    plot_test = list(test_generator.data.take(1))[0]
-    plot_test = {'input_video': plot_test['input_video'][None,...],'input_ref': plot_test['input_ref'][None,...], 'input_mask': plot_test['input_mask'][None,...]}
+    
     
     # Logging and callbacks
     log_folder = 'EchoNet'

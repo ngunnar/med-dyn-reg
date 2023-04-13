@@ -21,7 +21,7 @@ class SetLossWeightsCallbackMM(SetLossWeightsCallback):
 
     def on_epoch_begin(self, epoch, logs=None):        
         new_beta_value = tf.sigmoid((epoch-1)**2/self.kl_growth-self.kl_growth)     
-        self.set_value(self.model.tranversal_model, new_beta_value)
+        self.set_value(self.model.transversal_model, new_beta_value)
         self.set_value(self.model.sagittal_model, new_beta_value)
         self.set_value(self.model.coronal_model, new_beta_value)
         
@@ -201,41 +201,41 @@ class VisualizeResultCallback(tfk.callbacks.Callback):
 class VisualizeResultCallbackMM(VisualizeResultCallback):
     def visualize_model(self, epoch):
         if epoch % self.log_interval == 0:
-            train_tran, train_sag, train_cor = self.model.eval(self.train_data)
-            img_train_tran = plot_to_image(self.train_data['tranversal'], train_tran['image_data'])
+            train_trans, train_sag, train_cor = self.model.eval(self.train_data)
+            img_train_trans = plot_to_image(self.train_data['transversal'], train_trans['image_data'])
             img_train_sag = plot_to_image(self.train_data['sagittal'], train_sag['image_data'])
             img_train_cor = plot_to_image(self.train_data['coronal'], train_cor['image_data'])
             
             if self.test_data is not None:
                 test_tran, test_sag, test_cor = self.model.eval(self.test_data)
-                img_test_tran = plot_to_image(self.test_data['tranversal'], test_tran['image_data'])
+                img_test_trans = plot_to_image(self.test_data['transversal'], test_tran['image_data'])
                 img_test_sag = plot_to_image(self.test_data['sagittal'], test_sag['image_data'])
                 img_test_cor = plot_to_image(self.test_data['coronal'], test_cor['image_data'])
             
-            if 'latent_dist' in train_tran.keys():
-                train_latent_tran = latent_plot(train_tran['latent_dist'], train_tran['x_obs'])
+            if 'latent_dist' in train_trans.keys():
+                train_latent_trans = latent_plot(train_trans['latent_dist'], train_trans['x_obs'])
                 train_latent_sag = latent_plot(train_sag['latent_dist'], train_sag['x_obs'])
                 train_latent_cor = latent_plot(train_cor['latent_dist'], train_cor['x_obs'])
                 if self.test_data is not None:
-                    test_latent_tran = latent_plot(test_tran['latent_dist'], test_tran['x_obs'])
+                    test_latent_trans = latent_plot(test_tran['latent_dist'], test_tran['x_obs'])
                     test_latent_sag = latent_plot(test_sag['latent_dist'], test_sag['x_obs'])
                     test_latent_cor = latent_plot(test_cor['latent_dist'], test_cor['x_obs'])
             
             with self.img_writer.as_default():
-                tf.summary.image("Images train Tran", img_train_tran, step=epoch)
+                tf.summary.image("Images train Trans", img_train_trans, step=epoch)
                 tf.summary.image("Images train Sag", img_train_sag, step=epoch)
                 tf.summary.image("Images train Cor", img_train_cor, step=epoch)
 
                 if self.test_data is not None:
-                    tf.summary.image("Images test Tran", img_test_tran, step=epoch)
+                    tf.summary.image("Images test Trans", img_test_trans, step=epoch)
                     tf.summary.image("Images test Sag", img_test_sag, step=epoch)
                     tf.summary.image("Images test Cor", img_test_cor, step=epoch)
                 
-                if 'latent_dist' in train_tran.keys():
-                    tf.summary.image("Latents train Tran", train_latent_tran, step=epoch)
+                if 'latent_dist' in train_trans.keys():
+                    tf.summary.image("Latents train Trans", train_latent_trans, step=epoch)
                     tf.summary.image("Latents train Sag", train_latent_sag, step=epoch)
                     tf.summary.image("Latents train Cor", train_latent_cor, step=epoch)
                     if self.test_data is not None:
-                        tf.summary.image("Latents test Tran", test_latent_tran, step=epoch)
+                        tf.summary.image("Latents test Trans", test_latent_trans, step=epoch)
                         tf.summary.image("Latents test Sag", test_latent_sag, step=epoch)
                         tf.summary.image("Latents test Cor", test_latent_cor, step=epoch)

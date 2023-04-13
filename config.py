@@ -26,7 +26,7 @@ def get_config(
     trainable_R = True,
     trainable_Q = True,
     #trainable_mu = True,
-    #trainable_sigma = True,
+    trainable_sigma0 = True,
     #sigma_full = False,
     # Training
     losses = ['kvae_loss', 'grad'],
@@ -78,7 +78,7 @@ def get_config(
         "trainable_R":trainable_R,
         "trainable_Q":trainable_Q,
         #"trainable_mu":trainable_mu,
-        #"trainable_sigma":trainable_sigma,
+        "trainable_sigma":trainable_sigma0,
         #"sigma_full":sigma_full,
         #"K": K,
         # Training

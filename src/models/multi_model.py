@@ -7,31 +7,40 @@ class MultiModel(tfk.Model):
     def __init__(self, config, name='multi_model', **kwargs):
         super(MultiModel, self).__init__(self, name=name, **kwargs)
         self.config = config
-        self.tranversal_model = fKVAE(config, 'tranversal_model', prefix='Tran')
+        self.transversal_model = fKVAE(config, 'transversal_model', prefix='Tran')
         self.sagittal_model = fKVAE(config, 'sagittal_model', prefix='Sag')
         self.coronal_model = fKVAE(config, 'coronal_model', prefix='Cor')
-
+    
+    def parse_inputs(self, inputs):
+        y_trans = inputs['transversal']
+        y_sag = inputs['sagittal']
+        y_cor = inputs['coronal']
+        
+        y_trans_ref = inputs['transversal_ref']
+        y_sag_ref = inputs['sagittal_ref']
+        y_cor_ref = inputs['coronal_ref']
+        
+        mask = tf.zeros((y_trans.shape[0], y_trans.shape[1]), dtype='bool')
+        inputs_trans = {'input_video': y_trans, 'input_ref': y_trans_ref, 'input_mask': mask}
+        inputs_sag = {'input_video': y_sag, 'input_ref': y_sag_ref, 'input_mask': mask}
+        inputs_cor = {'input_video': y_cor, 'input_ref': y_cor_ref, 'input_mask': mask}
+        return inputs_trans, inputs_sag, inputs_cor
+        
     def call(self, inputs):
-        y_tranversal = inputs['tranversal']
-        y_sagittal = inputs['sagittal']
-        y_coronal = inputs['coronal']
-        mask = tf.zeros((y_tranversal.shape[0], y_tranversal.shape[1]), dtype='bool')
+        inputs_trans, inputs_sag, inputs_cor = self.parse_inputs(inputs)
 
-        self.tranversal_model({'input_video': y_tranversal, 'input_ref': y_tranversal[:,0,...], 'input_mask': mask})
-        self.sagittal_model({'input_video': y_sagittal, 'input_ref': y_sagittal[:,0,...], 'input_mask': mask})
-        self.coronal_model({'input_video': y_coronal, 'input_ref': y_coronal[:,0,...], 'input_mask': mask})
+        self.transversal_model(inputs_trans)
+        self.sagittal_model(inputs_sag)
+        self.coronal_model(inputs_cor)
 
     @tf.function
     def eval(self, inputs):
-        y_tranversal = inputs['tranversal']
-        y_sagittal = inputs['sagittal']
-        y_coronal = inputs['coronal']
-        mask = tf.zeros((y_tranversal.shape[0], y_tranversal.shape[1]), dtype='bool')
-
-        output_tran = self.tranversal_model.eval({'input_video': y_tranversal, 'input_ref': y_tranversal[:,0,...], 'input_mask': mask})
-        output_sag = self.sagittal_model.eval({'input_video': y_sagittal, 'input_ref': y_sagittal[:,0,...], 'input_mask': mask})
-        output_cor = self.coronal_model.eval({'input_video': y_coronal, 'input_ref': y_coronal[:,0,...], 'input_mask': mask})
-        return output_tran, output_sag, output_cor
+        inputs_trans, inputs_sag, inputs_cor = self.parse_inputs(inputs)
+        
+        output_trans = self.transversal_model.eval(inputs_trans)
+        output_sag = self.sagittal_model.eval(inputs_sag)
+        output_cor = self.coronal_model.eval(inputs_cor)
+        return output_trans, output_sag, output_cor
 
     def compile(self, num_batches, loss=None, metrics=None, loss_weights=None, weighted_metrics=None, run_eagerly=None, steps_per_execution=None, jit_compile=None, **kwargs):
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(self.config.init_lr, 

@@ -16,12 +16,13 @@ from .utils import set_name
 class fKVAE(KVAE):
     def __init__(self, config, name="fKVAE", prefix=None, **kwargs):
         super(fKVAE, self).__init__(config = config, name=name, prefix=prefix, **kwargs)
-        self.decoder = Decoder(self.config, output_channels = 2, prefix=prefix)       
+        self.decoder = Decoder(self.config, output_channels = 2, prefix=prefix)        
         
         self.output_dist = tfpl.IndependentNormal(config.dim_y, name=set_name('output_dist', prefix))
         self.y_sigma = lambda y: tf.ones_like(y, dtype='float32') * tfp.math.softplus_inverse(0.01)
         self.stn = SpatialTransformer()
         self.warp = tf.keras.layers.Lambda(lambda x: self.warping(x), name=set_name('warping', prefix))
+        self.w_g = tf.Variable(initial_value=1., trainable=False, dtype="float32", name=set_name("w_g", prefix))
         #external_mask = tf.convert_to_tensor(np.load(config.ds_path + '/external_mask.npy'))
         #self.external_mask = tf.repeat(external_mask[...,None], 2, axis=-1)
         if self.config.int_steps > 0:            
@@ -52,32 +53,32 @@ class fKVAE(KVAE):
 
     def call(self, inputs, training):
         y = inputs['input_video']
-        y_ref = inputs['input_ref']
+        y0 = inputs['input_ref']
         mask = inputs['input_mask'] 
         
-        q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll, p_phi = self.forward(inputs, training)
+        q_x, x, s, s_feats, log_pred, log_filt, log_p_1, log_smooth, ll, p_phi, p_y0 = self.forward(inputs, training)
 
         phi = p_phi.sample()
         
         if self.config.int_steps > 0:
             phi = self.diff_steps(phi)
         
-        y_mu = self.warp([phi, y_ref])
+        y_mu = self.warp([phi, y0])
         y_mu = tf.reshape(y_mu, (-1, y.shape[1], y.shape[2] * y.shape[3]))
         y_sigma = self.y_sigma(y_mu)
         p_y =  self.output_dist(tf.concat([y_mu, y_sigma], axis=-1))        
 
-        self.set_loss(y, mask, p_y, p_phi, q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll)
+        self.set_loss(y, y0, mask, p_y, p_y0, p_phi, q_x, x, s, s_feats, log_pred, log_filt, log_p_1, log_smooth, ll)
         return
 
     @tf.function
     def eval(self, inputs):
         y = inputs['input_video']
-        y_ref = inputs['input_ref']
+        y0 = inputs['input_ref']
         mask = inputs['input_mask'] 
         length = y.shape[1]
         
-        q_x, q_s, s_feat = self.encoder(y, y_ref, training=False)         
+        q_x, q_s, s_feats = self.encoder(y, y0, training=False)         
         x = q_x.sample()
         s = q_s.sample()
         
@@ -85,10 +86,10 @@ class fKVAE(KVAE):
         p_obssmooth, p_obsfilt, p_obspred = self.lgssm.get_distribtions(x, mask)
         
         # Flow distributions         
-        p_phi_vae = self.dec(x, s, s_feat, length, False)
-        p_phi_smooth = self.dec(p_obssmooth.mean(), s, s_feat, length, False)
-        p_phi_filt = self.dec(p_obsfilt.mean(), s, s_feat, length, False)
-        p_phi_pred = self.dec(p_obspred.mean(), s, s_feat, length, False)
+        p_phi_vae = self.dec(x, s, s_feats, length, False)
+        p_phi_smooth = self.dec(p_obssmooth.mean(), s, s_feats, length, False)
+        p_phi_filt = self.dec(p_obsfilt.mean(), s, s_feats, length, False)
+        p_phi_pred = self.dec(p_obspred.mean(), s, s_feats, length, False)
 
         # Flow samples
         phi_vae = p_phi_vae.sample()
@@ -103,23 +104,23 @@ class fKVAE(KVAE):
 
         # Image distributions and samples
         last_channel = y.shape[2] * y.shape[3]
-        y_mu_vae = self.warp([phi_vae, y_ref])
+        y_mu_vae = self.warp([phi_vae, y0])
         y_mu_vae = tf.reshape(y_mu_vae, (-1, y.shape[1], last_channel))
         y_sigma = self.y_sigma(y_mu_vae)
         p_y_vae =  self.output_dist(tf.concat([y_mu_vae, y_sigma], axis=-1))
         y_vae = p_y_vae.sample()
 
-        y_mu_smooth = self.warp([phi_smooth, y_ref])
+        y_mu_smooth = self.warp([phi_smooth, y0])
         y_mu_smooth = tf.reshape(y_mu_smooth, (-1, y.shape[1], last_channel))
         p_y_smooth =  self.output_dist(tf.concat([y_mu_smooth, y_sigma], axis=-1))
         y_smooth = p_y_smooth.sample()
 
-        y_mu_filt = self.warp([phi_filt, y_ref])
+        y_mu_filt = self.warp([phi_filt, y0])
         y_mu_filt = tf.reshape(y_mu_filt, (-1, y.shape[1], last_channel))
         p_y_filt =  self.output_dist(tf.concat([y_mu_filt, y_sigma], axis=-1))
         y_filt = p_y_filt.sample()
 
-        y_mu_pred = self.warp([phi_pred, y_ref])
+        y_mu_pred = self.warp([phi_pred, y0])
         y_mu_pred = tf.reshape(y_mu_pred, (-1, y.shape[1], last_channel))
         p_y_pred =  self.output_dist(tf.concat([y_mu_pred, y_sigma], axis=-1))
         y_pred = p_y_pred.sample()
@@ -131,14 +132,18 @@ class fKVAE(KVAE):
                 'latent_dist': {'smooth': p_obssmooth, 'filt': p_obsfilt, 'pred': p_obspred},
                 'x_obs': x,
                 's': s,
-                's_feat': s_feat}
+                's_feat': s_feats}
 
-    def set_loss(self, y, mask, p_y, p_phi, q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll):
-        super().set_loss(y=y, 
+    def set_loss(self, y, y0, mask, p_y, p_y0, p_phi, q_x, x, s, s_feats, log_pred, log_filt, log_p_1, log_smooth, ll):
+        super().set_loss(y=y,
+                         y0=y0,
                          mask=mask, 
-                         p_y=p_y, 
+                         p_y=p_y,
+                         p_y0=p_y0, 
                          q_x=q_x, 
                          x=x, 
+                         s=s,
+                         s_feats=s_feats,
                          log_pred = log_pred,
                          log_filt = log_filt,
                          log_p_1 = log_p_1,
@@ -148,17 +153,17 @@ class fKVAE(KVAE):
         grad = self.grad_loss.loss(None, p_phi.mean())
         self.grad_flow_metric.update_state(grad)
         if 'grad' in self.config.losses:
-            self.add_loss(grad)
+            self.add_loss(self.w_g * grad)
         return
 
     @tf.function
-    def reconstruct(self, x, y_ref, x_ref, x_ref_feat):
-        phi = self.dec(x, x_ref, x_ref_feat, 1, False).sample()
+    def reconstruct(self, x, y0, s, s_feat):
+        phi = self.dec(x, s, s_feat, 1, False).sample()
         if self.config.int_steps > 0:
             phi = self.diff_steps(phi)
 
-        y_mu = self.warp([phi, y_ref])
-        y_mu = tf.reshape(y_mu, (-1, 1, y_ref.shape[1]*y_ref.shape[2]))
+        y_mu = self.warp([phi, y0])
+        y_mu = tf.reshape(y_mu, (-1, 1, y0.shape[1]*y0.shape[2]))
         y_sigma = self.y_sigma(y_mu)
         p_y =  self.output_dist(tf.concat([y_mu, y_sigma], axis=-1))
         return p_y

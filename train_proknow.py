@@ -55,11 +55,8 @@ def main(dim_y = (112,112),
     len_data = sum(train_dataset.map(lambda x: 1).as_numpy_iterator())
     
     # Put it before shuffle to get same plot images every time
-    plot_train = list(train_dataset.take(1))[0]
-    plot_train = {'input_video': plot_train['input_video'][None,...], 'input_ref': plot_train['input_ref'][None,...], 'input_mask': plot_train['input_mask'][None,...]}
-    
-    plot_test= list(test_dataset.take(1))[0]
-    plot_test = {'input_video': plot_test['input_video'][None,...], 'input_ref': plot_test['input_ref'][None,...], 'input_mask': plot_test['input_mask'][None,...]}
+    plot_train = list(train_dataset.batch(1).take(1))[0]
+    plot_test= list(test_dataset.batch(1).take(1))[0]    
     
     train_dataset = train_dataset.shuffle(buffer_size=len_data).batch(config.batch_size, drop_remainder=True)
     test_dataset = test_dataset.shuffle(buffer_size=len_data).batch(config.batch_size, drop_remainder=True)

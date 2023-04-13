@@ -140,31 +140,31 @@ class Encoder(tfk.Model):
     def call(self, y, y_ref, training):
         length = tf.shape(y)[1]              
         
-        x_seq_down = tf.reshape(y, (-1, *self.dim_y, 1)) #(bs, length, h, w) -> (bs*length, h, w, 1)
-        x_ref_down = tf.reshape(y_ref, (-1, *self.dim_y, 1)) #(bs, h, w) -> (bs, h, w, 1)       
+        x_down = tf.reshape(y, (-1, *self.dim_y, 1)) #(bs, length, h, w) -> (bs*length, h, w, 1)
+        s_down = tf.reshape(y_ref, (-1, *self.dim_y, 1)) #(bs, h, w) -> (bs, h, w, 1)       
         
-        x_ref_feat = []
+        s_feats = []
         for i in range(len(self.filters)):
-            x_seq, x_seq_down = self.down_blocks[i](x_seq_down, training)
-            x_ref, x_ref_down = self.down_blocks[i](x_ref_down, training)                        
+            _, x_down = self.down_blocks[i](x_down, training)
+            s_feat, s_down = self.down_blocks[i](s_down, training)                        
             
             # Repeat this to handle merge with sequence in decoder                
-            x_ref = x_ref[:,None,...] # (bs, w, h, c) -> (bs, 1, w, h, c)            
-            x_ref = tf.repeat(x_ref, length, axis=1) # (bs, 1, w, h, c) -> (bs, length, w, h, c)     
+            s_feat = s_feat[:,None,...] # (bs, w, h, c) -> (bs, 1, w, h, c)            
+            s_feat = tf.repeat(s_feat, length, axis=1) # (bs, 1, w, h, c) -> (bs, length, w, h, c)     
             
-            x_ref_feat.append(x_ref)
+            s_feats.append(s_feat)
         
-        x_seq_down = self.flatten(x_seq_down)
-        x_seq_down = self.dense(x_seq_down)
-        x_seq_down = tf.reshape(x_seq_down, (-1, length, self.use_dist.params_size(self.dim_x)))
-        q_enc = self.enc_q(x_seq_down)
+        x_down = self.flatten(x_down)
+        x_down = self.dense(x_down)
+        x_down = tf.reshape(x_down, (-1, length, self.use_dist.params_size(self.dim_x)))
+        q_enc = self.enc_q(x_down)
 
-        x_ref_down = self.flatten(x_ref_down)
-        x_ref_down = self.dense(x_ref_down)
-        x_ref_down = tf.reshape(x_ref_down, (-1, self.use_dist.params_size(self.dim_x)))
-        q_ref_enc = self.enc_q(x_ref_down)
+        s_down = self.flatten(s_down)
+        s_down = self.dense(s_down)
+        s_down = tf.reshape(s_down, (-1, self.use_dist.params_size(self.dim_x)))
+        q_ref_enc = self.enc_q(s_down)
         
-        return q_enc, q_ref_enc, x_ref_feat
+        return q_enc, q_ref_enc, s_feats
 
     @tf.function
     def simple_encode(self, y):

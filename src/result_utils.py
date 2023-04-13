@@ -55,25 +55,26 @@ def load_model(path, Model, file):
     return model, config
 
 def plot_latents(data, model, save_dir=None):
-    latent_data = model.get_latents(data)
+    result = model.eval(data)
+    latent_data = result['latent_dist']
     
-    x_mu_smooth = latent_data['smooth_mean']
-    x_cov_smooth = latent_data['smooth_cov']
-    x_mu_filt = latent_data['filt_mean']
-    x_covs_filt = latent_data['filt_cov']
-    x_mu_filt_pred = latent_data['pred_mean']
-    x_covs_filt_pred = latent_data['pred_cov']
-    x = latent_data['x']
+    x_mu_smooth = latent_data['smooth'].mean()
+    std_smooth = latent_data['smooth'].stddev()
+    x_mu_filt = latent_data['filt'].mean()
+    std_filt = latent_data['filt'].stddev()
+    x_mu_filt_pred = latent_data['pred'].mean()
+    std_pred = latent_data['pred'].stddev()
+    x = result['x_obs']
     
-    std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth[0,...]))
-    std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
-    std_pred = tf.sqrt(tf.linalg.diag_part(x_covs_filt_pred[0,...]))
+    #std_smooth = tf.sqrt(tf.linalg.diag_part(x_cov_smooth[0,...]))
+    #std_filt = tf.sqrt(tf.linalg.diag_part(x_covs_filt[0,...]))
+    #std_pred = tf.sqrt(tf.linalg.diag_part(x_covs_filt_pred[0,...]))
     
     plt.rcParams.update({'font.size': 22})
     custom_ylim = (-0.2, 0.2)
 
     handles = {}
-    t = np.arange(data[0].shape[1])
+    t = np.arange(data['input_video'].shape[1])
     d = x_mu_smooth.shape[-1]
     
     k,l = math.ceil(d/8), min(d,8)
@@ -84,9 +85,9 @@ def plot_latents(data, model, save_dir=None):
         mu_f = x_mu_filt[0,:,i]
         mu_p = x_mu_filt_pred[0,:,i]
 
-        stf_s = std_smooth[:,i]
-        stf_f = std_filt[:,i]
-        stf_p = std_pred[:,i]
+        stf_s = std_smooth[0,:,i]
+        stf_f = std_filt[0,:,i]
+        stf_p = std_pred[0,:,i]
         
         axs[i].set_title('d={0}'.format(i))
         l1, = axs[i].plot(t, mu_s, 'r', label='Smooth')
@@ -307,7 +308,79 @@ def plot_latent(y_true, steps, last, model, y_range, dimension, save_dir=None, l
         plt.savefig(save_dir, bbox_extra_artists=[lgd], bbox_inches='tight')
     else:
         plt.show()
+def create_animation(y_true, latent_versions, steps, last, model, save_dir = None, show_jac = False):
+    length = y_true.shape[1]
+    mask = np.ones(shape=length).astype('bool')
+    known = np.arange(length)
+    known = known[:-last][::steps]
+    mask[known] = False    
+    
+    data = {'input_video': y_true, 'input_ref': y_true[:,0,...], 'input_mask': mask[None,...]}
+    result = model.eval(data)
+    
+    y_ests = []
+    jac_ests = []
+    for i, n in enumerate(latent_versions):
+        y_est = result['image_data'][n]['images']
+        phi_est = result['image_data'][n]['flows']
+        jac_est = batch_jacobian_determinant(phi_est)<=0
+        y_ests.append(y_est)
+        jac_ests.append(jac_est)
+        print(y_ests[i].shape)
+
+    
+    fig, axs = plt.subplots(1,2+len(latent_versions),figsize= [8.0*4, 6.0*1])
+    axs = axs.flatten()
+
+    [ax.axis('off') for ax in axs]
+    
+    for i, n in enumerate(latent_versions):
+        axs[i+1].set_title(n)
+    axs[-1].set_title("True data")
+    
+    fig.suptitle(r"$t = [1, {0}, {1}, \dots]$".format(1+steps, 1+2*steps))
+    
+    def plot(ax, d, mask,i):
+        if mask == True:
+            cmap = 'gray'
+        else:
+            cmap = 'gray'
+
+        if np.all(d[i,...] == 0.0):
+            return ax.imshow(d[i,...]+1.0, cmap=cmap, vmin=0, vmax=1)
+        elif d.shape[0] > i:
+            return ax.imshow(d[i,...], cmap=cmap)#,vmin=0, vmax=1)
+        else:
+            return ax.imshow(np.zeros_like(d[0,...]), cmap=cmap)#,vmin=0, vmax=1)
+   
+    ims = []
+    k = 0
+    for i in range(y_true.shape[1]):
+        if mask[i] == False:
+            k = i
+            
+        im = []        
+        im += [plot(axs[0], y_true[0,...], False,k)]
+        for k in range(len(latent_versions)):
+            im += [plot(axs[k+1], y_ests[k][0,...], mask[i],i)]
+            if show_jac:
+                im += axs[k+1].contour(jac_ests[k][0,i,...], colors='r').collections
         
+        im += [plot(axs[-1], y_true[0,...], False,i)]
+
+        title = axs[0].text(0.5,1.05,"Input t={}".format(i), 
+                        size=plt.rcParams["axes.titlesize"],
+                        ha="center", transform=axs[0].transAxes, )
+        im += [title]
+        ims.append(im)
+
+    anim = animation.ArtistAnimation(fig, ims, interval=150, blit=True)
+    if save_dir is not None:
+        anim.save(save_dir, writer='imagemagick', fps=8, bitrate=900)
+    else:
+        return anim
+
+'''
 def create_animation(y_true, steps, last, model, save_dir = None, show_jac = False):
     length = y_true.shape[1]
     mask = np.ones(shape=length).astype('bool')
@@ -315,14 +388,18 @@ def create_animation(y_true, steps, last, model, save_dir = None, show_jac = Fal
     known = known[:-last][::steps]
     mask[known] = False    
     
-    data = [y_true, mask[None,...]]
-    result = model.predict(data)
+    data = {'input_video': y_true, 'input_ref': y_true[:,0,...], 'input_mask': mask[None,...]}
+    result = model.eval(data)
     
-    y_smooth = next(item for item in result if item["name"] == "smooth")['data']
-    phi_smooth = next(item for item in result if item["name"] == "smooth_flow")['data']
+    y_smooth = result['image_data']['smooth']['images']
+    phi_smooth = result['image_data']['smooth']['flows']
+    #y_smooth = next(item for item in result if item["name"] == "smooth")['data']
+    #phi_smooth = next(item for item in result if item["name"] == "smooth_flow")['data']
 
-    y_pred = next(item for item in result if item["name"] == "pred")['data']
-    phi_pred = next(item for item in result if item["name"] == "pred_flow")['data']
+    y_pred = result['image_data']['pred']['images']
+    phi_pred = result['image_data']['pred']['flows']
+    #y_pred = next(item for item in result if item["name"] == "pred")['data']
+    #phi_pred = next(item for item in result if item["name"] == "pred_flow")['data']
     
     #jac_filt = batch_jacobian_determinant(phi_hat_filt)<=0
     jac_smooth = batch_jacobian_determinant(phi_smooth)<=0
@@ -379,4 +456,4 @@ def create_animation(y_true, steps, last, model, save_dir = None, show_jac = Fal
         anim.save(save_dir, writer='imagemagick', fps=8, bitrate=900)
     else:
         return anim
-    
+'''

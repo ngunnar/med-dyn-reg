@@ -56,7 +56,7 @@ class AckisLoader:
                     df['seq_group'] = (df['time_diff'].apply(group_criterion).cumsum())
                     groups = df.groupby('seq_group')
                     for _, g in groups:
-                        tranversals = []
+                        transversals = []
                         sagittals = []
                         coronals = []                        
                         
@@ -66,48 +66,35 @@ class AckisLoader:
                             if row['orientation'] == 1:
                                 sagittals.append(row['image'])
                             if row['orientation'] == 2:
-                                tranversals.append(row['image'])
+                                transversals.append(row['image'])
 
-                        min_length = min(len(coronals), len(sagittals), len(tranversals)) # 
+                        min_length = min(len(coronals), len(sagittals), len(transversals)) # 
                         if min_length < length:
                             continue
                         coronals = np.asarray(coronals[:min_length], dtype='float32')
                         sagittals = np.asarray(sagittals[:min_length], dtype='float32')
-                        tranversals = np.asarray(tranversals[:min_length], dtype='float32')
-                        yield {'coronal': coronals, 'sagittal': sagittals, 'tranversal': tranversals}
-                    
-                    '''
-                    for i in np.arange(0, len(data) - len(data)%3, 3):
-                        plane0 = image_direction(data[i])
-                        plane1 = image_direction(data[i+1])
-                        plane2 = image_direction(data[i+2])
-                        planes = np.asarray([plane0, plane1, plane2])
-                        assert 0 in planes, "Got planes {0}".format(planes)
-                        assert 1 in planes, "Got planes {0}".format(planes)
-                        assert 2 in planes, "Got planes {0}".format(planes)
-
-                        coronal_idx = np.argwhere(planes==0)[0][0] + i
-                        sagittal_idx = np.argwhere(planes==1)[0][0] + i
-                        tranversal_idx = np.argwhere(planes==2)[0][0] + i
-                        
-                        coronal.append(read_image(data[coronal_idx], rows, cols))
-                        sagittal.append(read_image(data[sagittal_idx], rows, cols))
-                        tranversal.append(read_image(data[tranversal_idx], rows, cols))
-
-                    coronal = np.asarray(coronal, dtype='float32')
-                    sagittal = np.asarray(sagittal, dtype='float32')
-                    tranversal = np.asarray(tranversal, dtype='float32')
-                    yield {'coronal': coronal, 'sagittal': sagittal, 'tranversal': tranversal}
-                    '''
+                        transversals = np.asarray(transversals[:min_length], dtype='float32')
+                        #print(f, coronals.shape)
+                        yield {'coronal': coronals, 'coronal_ref': coronals[0,...], 
+                               'sagittal': sagittals, 'sagittal_ref': sagittals[0,...],
+                               'transversal': transversals, 'transversal_ref': transversals[0,...]}
         return gen   
 
 class AckisDataLoader:  
     def __init__(self, length, dim_y):
         patients = glob.glob('/data/Niklas/CinesMRL/*/')
         patients.sort()
-        self.train_patients = patients[:int(len(patients)*0.8)] # First 80 %
-        self.test_patients = patients[int(len(patients)*0.8):int(len(patients)*0.9)] # Second 10 %
-        self.val_patients = patients[int(len(patients)*0.9):] # Last 10 %
+
+        val_patients = ['1']
+        test_patients = ['2', '3']
+
+        self.train_patients = [p for p in patients if not (p.split('/')[-2] in val_patients or p.split('/')[-2] in test_patients)]
+        self.val_patients = [p for p in patients if p.split('/')[-2] in val_patients]
+        self.test_patients = [p for p in patients if p.split('/')[-2] in test_patients]
+
+        #self.train_patients = patients[:int(len(patients)*0.9)] # First 90 %
+        #self.val_patients = patients[int(len(patients)*0.9):int(len(patients)*0.95)] # Second 5 %
+        #self.test_patients = patients[int(len(patients)*0.95):] # Last 5 %
                 
         max_val = 3000
         min_val = 500

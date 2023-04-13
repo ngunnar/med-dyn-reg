@@ -4,6 +4,7 @@ import datetime
 import argparse
 import json
 import numpy as np
+from collections import defaultdict
 
 from config import get_config
 from src.models.multi_model import MultiModel
@@ -20,7 +21,7 @@ def main(dim_y = (112,112),
          prefix = None,
          skip_connection = False,
          losses = ['kvae_loss', 'grad']):
-    num_batches = 2
+    num_batches = 4
     config, config_dict = get_config(dim_y = dim_y, 
                                      dim_x = dim_x,
                                      dim_z = dim_z,                                     
@@ -51,15 +52,8 @@ def main(dim_y = (112,112),
     len_test = sum(test_dataset.map(lambda x: 1).as_numpy_iterator())
     
     # Put it before shuffle to get same plot images every time
-    plot_train = list(train_dataset.take(1))[0]
-    plot_train = {'tranversal': plot_train['tranversal'][None,...], 
-                  'sagittal': plot_train['sagittal'][None,...], 
-                  'coronal': plot_train['coronal'][None,...]}
-
-    plot_test= list(test_dataset.take(1))[0]
-    plot_test = {'tranversal': plot_test['tranversal'][None,...], 
-                 'sagittal': plot_test['sagittal'][None,...], 
-                 'coronal': plot_test['coronal'][None,...]}
+    plot_train = list(train_dataset.batch(1).take(1))[0]    
+    plot_test = list(test_dataset.batch(1).take(1))[0]
     
     train_dataset = train_dataset.shuffle(buffer_size=len_train).batch(config.batch_size, drop_remainder=True)
     test_dataset = test_dataset.shuffle(buffer_size=len_test).batch(config.batch_size, drop_remainder=True)

@@ -56,8 +56,10 @@ class LGSSM(tfk.Model):
         #self.dense_mu = tf.keras.layers.Dense(self.dim_z, name=set_name("init_mu_out", prefix))
         #self.dense_scale = tf.keras.layers.Dense(self.dim_z, activation='softplus', name=set_name("init_scale_out", prefix))
 		
-		
-        self.initial_prior = tfp.distributions.MultivariateNormalDiag(scale_diag=tf.ones([config.dim_z]))
+        sigma_0 = tf.constant_initializer([1. for _  in range(config.dim_z)])
+        self.sigma_0 = tf.Variable(initial_value=sigma_0(shape=config.dim_z), trainable=config.trainable_R, dtype='float32', name=set_name("Sigma0", prefix))
+        #self.initial_prior = tfp.distributions.MultivariateNormalDiag(scale_diag=tf.ones([config.dim_z]))
+        self.initial_prior = tfp.distributions.MultivariateNormalDiag(scale_diag=self.sigma_0)
         self.length = config.length
     
     @property

@@ -14,7 +14,7 @@ def main(dim_y = (112,112),
          dim_z = 8, 
          gpu = '0',
          int_steps = 0,
-         length = 53,
+         length = 50,
          model_path = None, 
          start_epoch = 1, 
          prefix = None,
@@ -48,25 +48,18 @@ def main(dim_y = (112,112),
     test_dataset = tf.data.Dataset.load(path)
 
     train_dataset = train_dataset.map(lambda y: {'input_video': y['sagittal'], 
-                                                 'input_ref': y['sagittal'][0,...], 
+                                                 'input_ref': y['sagittal_ref'], 
                                                  'input_mask': tf.zeros((y['sagittal'].shape[0]), dtype='bool')})
     test_dataset = test_dataset.map(lambda y: {'input_video': y['sagittal'], 
-                                                 'input_ref': y['sagittal'][0,...], 
-                                                 'input_mask': tf.zeros((y['sagittal'].shape[0]), dtype='bool')})
+                                               'input_ref': y['sagittal_ref'], 
+                                               'input_mask': tf.zeros((y['sagittal'].shape[0]), dtype='bool')})
     
     len_train = sum(train_dataset.map(lambda x: 1).as_numpy_iterator())
     len_test = sum(test_dataset.map(lambda x: 1).as_numpy_iterator())
     
-    # Put it before shuffle to get same plot images every time    
-    plot_train = list(train_dataset.take(1))[0]
-    plot_train = {'input_video': plot_train['input_video'][None,...], 
-                  'input_ref': plot_train['input_ref'][None,...], 
-                  'input_mask': plot_train['input_mask'][None,...]}
-    
-    plot_test= list(test_dataset.take(1))[0]
-    plot_test = {'input_video': plot_test['input_video'][None,...],
-                 'input_ref': plot_test['input_ref'][None,...],
-                 'input_mask': plot_test['input_mask'][None,...]}    
+    # Put it before shuffle to get same plot images every time        
+    plot_train = list(train_dataset.batch(1).take(1))[0]    
+    plot_test = list(test_dataset.batch(1).take(1))[0]
     
     train_dataset = train_dataset.shuffle(buffer_size=len_train).batch(config.batch_size, drop_remainder=True)
     test_dataset = test_dataset.shuffle(buffer_size=len_test).batch(config.batch_size, drop_remainder=True)

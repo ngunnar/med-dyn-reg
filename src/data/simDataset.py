@@ -35,9 +35,9 @@ def slice_image(image, slice_value, view):
     if view == 'axial':
         return image[:,:,slice_value]
     if view == 'coronal':
-        return image[:, slice_value, :]
+        return image[:, slice_value, ::-1]
     if view == 'sagittal':
-        return image[slice_value,...]
+        return image[slice_value,:,::-1]
     raise NotImplemented('View not implemented')
 
 
@@ -162,7 +162,7 @@ class SimDataLoader:
         
 class SimTestDataLoader:  
     def __init__(self, dim_y, view):
-        self.directories = [glob.glob('/data/Niklas/CineMRI/test/*')[1]]
+        self.directories = glob.glob('/data/Niklas/CineMRI/test/3')
         self.directories.sort()
 
         train, test = np.split(self.directories, [int(len(self.directories)*0.9)])
