@@ -3,7 +3,7 @@ import glob
 import SimpleITK as sitk
 import numpy as np
 import tensorflow as tf
-from .data_utils import get_tf_data
+from .data_utils import get_tf_data, preprocess_data
 
 def gaussian_noise_percentage(image, percent):
     # how to: https://stackoverflow.com/questions/31834803/how-to-add-5-percent-gaussian-noise-to-image
@@ -50,11 +50,11 @@ class SimLoader3D:
         return files
     
     @staticmethod
-    def read_generator(directories, get_files, noise_percentage, slice_no, view):
+    def read_generator(directories, get_files, noise_percentage, slice_no, view, dim_y, max_val, min_val):
         def gen():
             for directory in directories:
                 files = get_files(directory)
-                images = [] 
+                video = [] 
                 for f in files:
                     image = sitk.ReadImage(f)
                     image = slice_image(image, slice_no, view)
@@ -62,9 +62,10 @@ class SimLoader3D:
                     image = sitk.GetArrayFromImage(image)
                     if len(image.shape) == 3:
                         image = image[0,...]
-                    images.append(image)
-                images = np.asarray(images, dtype='float32')                              
-                yield {'input_ref': images[0,...], 'input_video': images}
+                    video.append(image)
+                video = np.asarray(video, dtype='float32')
+                video, img_ref = preprocess_data(video, dim_y, max_val, min_val)                        
+                yield {'input_ref': img_ref, 'input_video': video}
         return gen 
     
     
@@ -78,22 +79,20 @@ class SimLoader:
         return files
     
     @staticmethod
-    def read_generator(directories, get_files):
+    def read_generator(directories, get_files, dim_y, max_val, min_val ):
         def gen():
             for directory in directories:
                 files = get_files(directory)
-                images = [] 
+                video = [] 
                 for f in files:
                     image = np.load(f)                                        
-                    images.append(image)
-                images = np.asarray(images, dtype='float32')                              
-                yield {'input_ref': images[0,...], 'input_video': images}
+                    video.append(image)
+                video = np.asarray(video, dtype='float32')
+                video, img_ref = preprocess_data(video, dim_y, max_val, min_val)
+                yield {'input_ref': img_ref, 'input_video': video}
         return gen 
 
 class SimTestLoader:
-    def crop(image, seg, min_val=100):
-        _, y_nonzero, x_nonzero = np.nonzero(image > min_val)
-        return image[:, np.min(y_nonzero):np.max(y_nonzero), np.min(x_nonzero):np.max(x_nonzero)], seg[:, np.min(y_nonzero):np.max(y_nonzero), np.min(x_nonzero):np.max(x_nonzero)]
 
     @staticmethod
     def get_files(folder_output, view, seg):
@@ -106,11 +105,11 @@ class SimTestLoader:
         return img_files, seg_files
     
     @staticmethod
-    def read_generator(directories, view, seg_name, dim_y, noise_percentage=0.1):
+    def read_generator(directories, view, seg_name, dim_y, max_val, min_val, noise_percentage):
         def gen():
             for directory in directories:
                 img_files, seg_files = SimTestLoader.get_files(directory, view, seg_name)
-                images = []
+                video = []
                 segs = []
                 for img_f, seg_f in zip(img_files, seg_files):
                     image = sitk.ReadImage(img_f)
@@ -120,26 +119,14 @@ class SimTestLoader:
                     
                     image = sitk.GetArrayFromImage(image)
                     seg = sitk.GetArrayFromImage(seg)
-                    images.append(image)                    
+                    video.append(image)                    
                     segs.append(seg)
                 
-                images = np.asarray(images, dtype='float32')
+                video = np.asarray(video, dtype='float32')
                 segs = np.asarray(segs, dtype='float32')
                 
-                # crop
-                images, segs = SimTestLoader.crop(images, segs)
-                # clip
-                images = tf.clip_by_value(images, 0, 300)
-                
-                # resize
-                images = tf.image.resize(images[...,None], dim_y)
-                segs = tf.image.resize(segs[...,None], dim_y)
-                # normalize
-                images = tf.image.per_image_standardization(images)
-                
-                images = images[...,0]
-                segs = segs[...,0]
-                yield {'input_ref': images[0,...], 'input_video': images, 'input_seg_ref': segs[0,...], 'input_seg': segs}
+                video, img_ref, segs, seg_refs = preprocess_data(video, dim_y, max_val, min_val, segs)
+                yield {'input_ref': img_ref, 'input_video': video, 'input_seg_ref': seg_refs, 'input_seg': segs}
         return gen     
     
 class SimDataLoader:  
@@ -157,8 +144,8 @@ class SimDataLoader:
         min_val = 100
          
         get_files = lambda x: SimLoader.get_files(x, view)
-        self.ds_train, self.ds_model_train = get_tf_data(self.train_directories, length, dim_y, max_val, lambda x: SimLoader.read_generator(x, get_files), min_val)
-        self.ds_test, self.ds_model_test = get_tf_data(self.test_directories, length, dim_y, max_val, lambda x: SimLoader.read_generator(x, get_files), min_val)
+        self.ds_train, self.ds_model_train = get_tf_data(self.train_directories, length, dim_y, lambda x: SimLoader.read_generator(x, get_files, dim_y, max_val, min_val))
+        self.ds_test, self.ds_model_test = get_tf_data(self.test_directories, length, dim_y, lambda x: SimLoader.read_generator(x, get_files, dim_y, max_val, min_val))
         
 class SimTestDataLoader:  
     def __init__(self, dim_y, view):
@@ -174,8 +161,8 @@ class SimTestDataLoader:
         max_val = 300
         min_val = 100
          
-        get_files = lambda x: SimLoader.get_files(x, view)
-        self.ds = tf.data.Dataset.from_generator(SimTestLoader.read_generator(self.directories, 'sagittal', 'tumor', dim_y), 
+        #get_files = lambda x: SimLoader.get_files(x, view),
+        self.ds = tf.data.Dataset.from_generator(SimTestLoader.read_generator(self.directories, 'sagittal', 'tumor', dim_y, max_val, min_val, noise_percentage), 
                                                  output_types=({'input_ref': tf.float32, 
                                                                 'input_video': tf.float32, 
                                                                 'input_seg_ref': tf.float32,

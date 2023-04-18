@@ -69,37 +69,14 @@ class LK_encoder(tfkl.Layer):
 class EncoderMiniBlock(tfkl.Layer):
     def __init__(self, filters, reg_factor=0.01, kernel_size=(3,3), name='down_block', prefix=None, dropout_prob=0.0, **kwargs):
         super(EncoderMiniBlock, self).__init__(name=set_name(name, prefix), **kwargs)
-        self.conv_1 = CNN_layer(filters=filters, kernel_size=kernel_size, reg_factor=reg_factor, name=name + '_cnn1', prefix=prefix)        
-        
-        # LK
-        self.regular_kernel = LK_encoder(filters=filters, 
-                                         reg_factor = reg_factor,
-                                         kernel_size=kernel_size, 
-                                         name = set_name(name + '_regular_kernel', prefix))
-        self.large_kernel = LK_encoder(filters=filters, 
-                                       reg_factor = reg_factor,
-                                       kernel_size=(5,5), 
-                                       name = set_name(name + '_large_kernel', prefix))
-        self.one_kernel = LK_encoder(filters=filters,
-                                     reg_factor = reg_factor, 
-                                     kernel_size=(1,1), 
-                                     name = set_name(name + '_one_kernel', prefix))
-        
-        self.act_2 = tfkl.LeakyReLU(0.2, name = set_name(name + '_leakyRelu2', prefix))
-        
-        self.bn_2 = tfkl.BatchNormalization(momentum=0.99, epsilon=0.001,name = set_name(name + '_bn2', prefix))
-        
+        self.conv_1 = CNN_layer(filters=filters, kernel_size=kernel_size, reg_factor=reg_factor, name=name + '_cnn1', prefix=prefix)
+        self.conv_2 = CNN_layer(filters=filters, kernel_size=kernel_size, reg_factor=reg_factor, name=name + '_cnn2', prefix=prefix)
         self.dropout = tf.keras.layers.Dropout(dropout_prob)
         self.down_cnn = tfkl.MaxPool2D(pool_size=(2,2), name = set_name(name + '_down'))
 
     def call(self, x, training):
         x = self.conv_1(x, training)
-        x_rk = self.regular_kernel(x)
-        x_lk = self.large_kernel(x)
-        x_ok = self.one_kernel(x)
-        x = x + x_rk + x_lk + x_ok
-        x = self.bn_2(x, training)
-        x = self.act_2(x)        
+        x = self.conv_2(x, training)
         down_x = self.dropout(x)
         down_x = self.down_cnn(down_x)
         return x, down_x
@@ -135,8 +112,10 @@ class DecoderMiniBlock(tfkl.Layer):
         
     def call(self, x, training):
         feat = x[0]
+        # Upsampling
         up = self.up_cnn_T(feat)#, training)
         if self.skip_connection:
+            # Concatenate skip connection
             skip_feat = x[1]
             x = tf.concat([up, tf.reshape(skip_feat, (-1, *skip_feat.shape[2:]))], axis=-1)
         else:

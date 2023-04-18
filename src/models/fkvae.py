@@ -16,7 +16,7 @@ from .utils import set_name
 class fKVAE(KVAE):
     def __init__(self, config, name="fKVAE", prefix=None, **kwargs):
         super(fKVAE, self).__init__(config = config, name=name, prefix=prefix, **kwargs)
-        self.decoder = Decoder(self.config, output_channels = 2, prefix=prefix)        
+        self.decoder = Decoder(self.config.skip_connection, self.config, output_channels = 2, prefix=prefix)        
         
         self.output_dist = tfpl.IndependentNormal(config.dim_y, name=set_name('output_dist', prefix))
         self.y_sigma = lambda y: tf.ones_like(y, dtype='float32') * tfp.math.softplus_inverse(0.01)
@@ -52,12 +52,9 @@ class fKVAE(KVAE):
         return phi
 
     def call(self, inputs, training):
-        y = inputs['input_video']
-        y0 = inputs['input_ref']
-        mask = inputs['input_mask'] 
+        y, y0, mask = self.parse_inputs(inputs)
         
-        q_x, x, s, s_feats, log_pred, log_filt, log_p_1, log_smooth, ll, p_phi, p_y0 = self.forward(inputs, training)
-
+        q_x, x, _, _, log_pred, log_filt, log_p_1, log_smooth, ll, p_phi = self.forward(y, y0, mask, training)
         phi = p_phi.sample()
         
         if self.config.int_steps > 0:
@@ -68,19 +65,16 @@ class fKVAE(KVAE):
         y_sigma = self.y_sigma(y_mu)
         p_y =  self.output_dist(tf.concat([y_mu, y_sigma], axis=-1))        
 
-        self.set_loss(y, y0, mask, p_y, p_y0, p_phi, q_x, x, s, s_feats, log_pred, log_filt, log_p_1, log_smooth, ll)
+        self.set_loss(y, mask, p_y, p_phi, q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll)
         return
 
     @tf.function
     def eval(self, inputs):
-        y = inputs['input_video']
-        y0 = inputs['input_ref']
-        mask = inputs['input_mask'] 
+        y, y0, mask = self.parse_inputs(inputs)
         length = y.shape[1]
         
-        q_x, q_s, s_feats = self.encoder(y, y0, training=False)         
+        q_x, s, s_feats = self.encoder(y, y0, training=False)         
         x = q_x.sample()
-        s = q_s.sample()
         
         # Latent distributions 
         p_obssmooth, p_obsfilt, p_obspred = self.lgssm.get_distribtions(x, mask)
@@ -134,16 +128,12 @@ class fKVAE(KVAE):
                 's': s,
                 's_feat': s_feats}
 
-    def set_loss(self, y, y0, mask, p_y, p_y0, p_phi, q_x, x, s, s_feats, log_pred, log_filt, log_p_1, log_smooth, ll):
+    def set_loss(self, y, mask, p_y, p_phi, q_x, x, log_pred, log_filt, log_p_1, log_smooth, ll):
         super().set_loss(y=y,
-                         y0=y0,
                          mask=mask, 
                          p_y=p_y,
-                         p_y0=p_y0, 
                          q_x=q_x, 
                          x=x, 
-                         s=s,
-                         s_feats=s_feats,
                          log_pred = log_pred,
                          log_filt = log_filt,
                          log_p_1 = log_p_1,
@@ -153,7 +143,8 @@ class fKVAE(KVAE):
         grad = self.grad_loss.loss(None, p_phi.mean())
         self.grad_flow_metric.update_state(grad)
         if 'grad' in self.config.losses:
-            self.add_loss(self.w_g * grad)
+            #self.add_loss(self.w_g * grad)
+            self.add_loss((tf.reduce_mean(self.w_g * grad)))
         return
 
     @tf.function

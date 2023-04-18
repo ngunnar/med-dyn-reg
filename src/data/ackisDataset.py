@@ -4,7 +4,7 @@ import pandas as pd
 import scipy
 from collections import defaultdict
 
-from .data_utils import get_tf_multi_data
+from .data_utils import get_tf_multi_data, preprocess_data
 
 def read_image(image_data, rows, cols):
     """ read the image pixels (while converting bytearray from uint8 -> uint16)"""
@@ -31,7 +31,7 @@ def image_direction(image_data):
 
 class AckisLoader:
     @staticmethod
-    def read_generator(patients, length):
+    def read_generator(patients, length, dim_y, max_val, min_val):
         def gen():
             for p in patients:
                 files = glob.glob(p + '**/cineData.mat')
@@ -74,10 +74,14 @@ class AckisLoader:
                         coronals = np.asarray(coronals[:min_length], dtype='float32')
                         sagittals = np.asarray(sagittals[:min_length], dtype='float32')
                         transversals = np.asarray(transversals[:min_length], dtype='float32')
+                        coronals, coronal_ref = preprocess_data(coronals, dim_y, max_val, min_val)
+                        sagittals, sagittal_ref = preprocess_data(sagittals, dim_y, max_val, min_val)
+                        transversals, transversal_ref = preprocess_data(transversals, dim_y, max_val, min_val)
+
                         #print(f, coronals.shape)
-                        yield {'coronal': coronals, 'coronal_ref': coronals[0,...], 
-                               'sagittal': sagittals, 'sagittal_ref': sagittals[0,...],
-                               'transversal': transversals, 'transversal_ref': transversals[0,...]}
+                        yield {'coronal': coronals, 'coronal_ref': coronal_ref, 
+                               'sagittal': sagittals, 'sagittal_ref': sagittal_ref,
+                               'transversal': transversals, 'transversal_ref': transversal_ref}
         return gen   
 
 class AckisDataLoader:  
@@ -99,7 +103,7 @@ class AckisDataLoader:
         max_val = 3000
         min_val = 500
         
-        self.train_data, self.train = get_tf_multi_data(self.train_patients, length, dim_y, max_val, lambda x : AckisLoader.read_generator(x, length), min_val)
-        self.test_data, self.test = get_tf_multi_data(self.test_patients, length, dim_y, max_val, lambda x : AckisLoader.read_generator(x, length), min_val)
-        self.val_data, self.val = get_tf_multi_data(self.val_patients, length, dim_y, max_val, lambda x : AckisLoader.read_generator(x, length), min_val)
+        self.train_data, self.train = get_tf_multi_data(self.train_patients, length, dim_y, lambda x : AckisLoader.read_generator(x, length, dim_y, max_val, min_val))
+        self.test_data, self.test = get_tf_multi_data(self.test_patients, length, dim_y, lambda x : AckisLoader.read_generator(x, length, dim_y, max_val, min_val))
+        self.val_data, self.val = get_tf_multi_data(self.val_patients, length, dim_y, lambda x : AckisLoader.read_generator(x, length, dim_y, max_val, min_val))
         

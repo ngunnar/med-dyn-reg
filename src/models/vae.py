@@ -18,7 +18,7 @@ class VAE(tfk.Model):
         self.config = config
         
         self.encoder = Encoder(self.config, prefix=prefix)
-        self.decoder = Decoder(self.config, output_channels = 1, prefix=prefix)
+        self.decoder = Decoder(False, self.config, output_channels = 1, prefix=prefix)
 
         self.prior = tfd.Independent(tfd.Normal(loc=tf.zeros(self.config.dim_x), scale=1.), 
                                 reinterpreted_batch_ndims=1)
@@ -31,14 +31,14 @@ class VAE(tfk.Model):
 
     def call(self, inputs, training=None):
         y = inputs['input_video']
-        y_ref = inputs['input_ref']
+        y0 = inputs['input_ref']
         mask = inputs['input_mask']   
-        p_y, q_x, x = self.forward(y, y_ref, training)        
+        p_y, q_x, x = self.forward(y, y0, training)        
         self.set_loss(y, mask, p_y, q_x)
         return p_y, q_x, x
     
-    def forward(self, y, y_ref, training=None):
-        q_x, q_s, s_feat = self.encoder(y, y_ref, training)        
+    def forward(self, y, y0, training=None):
+        q_x, q_s, s_feat = self.encoder(y, y0, training)        
         x = q_x.sample()        
         p_y = self.decoder([x, s_feat], training)        
         
